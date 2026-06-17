@@ -1555,6 +1555,8 @@ function InsuranceInfoStrip({
   asset,
 }: {
   asset: {
+    id: number;
+    slug: string;
     year: number | null;
     insuranceVehNumber: number | null;
     bodyTypeCode: string | null;
@@ -1564,53 +1566,186 @@ function InsuranceInfoStrip({
     operatingRadiusMiles: number | null;
   };
 }) {
-  const hasAny =
-    asset.year != null ||
-    asset.insuranceVehNumber != null ||
-    asset.statedValueCents != null ||
-    asset.gvwGcwLbs != null;
-  if (!hasAny) return null;
+  const [editingField, setEditingField] = useState<string | null>(null);
+  const [draft, setDraft] = useState("");
+  const queryClient = useQueryClient();
+  const { toast } = useToast();
+  const updateTruck = useUpdateTruck();
+  const isPending = updateTruck.isPending;
 
-  const rows: { label: string; value: string }[] = [];
-  if (asset.year != null) rows.push({ label: "Year", value: String(asset.year) });
-  if (asset.insuranceVehNumber != null)
-    rows.push({ label: "Ins. Veh #", value: String(asset.insuranceVehNumber) });
-  if (asset.bodyTypeCode != null)
-    rows.push({
+  function startEdit(field: string, currentDraft: string) {
+    setEditingField(field);
+    setDraft(currentDraft);
+  }
+
+  function cancel() {
+    setEditingField(null);
+    setDraft("");
+  }
+
+  function save(field: string) {
+    let data: Record<string, unknown> = {};
+    const trimmed = draft.trim();
+    if (field === "year") {
+      const n = parseInt(trimmed);
+      data = { year: trimmed === "" ? null : Number.isFinite(n) ? n : null };
+    } else if (field === "insuranceVehNumber") {
+      const n = parseInt(trimmed);
+      data = { insuranceVehNumber: trimmed === "" ? null : Number.isFinite(n) ? n : null };
+    } else if (field === "statedValueCents") {
+      const dollars = parseFloat(trimmed.replace(/[$,]/g, ""));
+      data = { statedValueCents: trimmed === "" ? null : Number.isFinite(dollars) ? Math.round(dollars * 100) : null };
+    } else if (field === "gvwGcwLbs") {
+      const n = parseInt(trimmed.replace(/,/g, ""));
+      data = { gvwGcwLbs: trimmed === "" ? null : Number.isFinite(n) ? n : null };
+    } else if (field === "garagingState") {
+      data = { garagingState: trimmed === "" ? null : trimmed.toUpperCase().slice(0, 2) };
+    } else if (field === "bodyTypeCode") {
+      data = { bodyTypeCode: trimmed === "" ? null : trimmed };
+    }
+    updateTruck.mutate(
+      { id: asset.id, data: data as Parameters<typeof updateTruck.mutate>[0]["data"] },
+      {
+        onSuccess: () => {
+          queryClient.invalidateQueries({ queryKey: getGetAssetBySlugQueryKey(asset.slug) });
+          queryClient.invalidateQueries({ queryKey: getListAssetsQueryKey() });
+          toast({ title: "Updated" });
+          setEditingField(null);
+        },
+        onError: () => toast({ title: "Could not update", variant: "destructive" }),
+      },
+    );
+  }
+
+  type FieldDef = {
+    key: string;
+    label: string;
+    displayValue: string | null;
+    draftValue: string;
+    isSelect?: boolean;
+    inputType?: string;
+    placeholder?: string;
+  };
+
+  const fields: FieldDef[] = [
+    {
+      key: "year",
+      label: "Year",
+      displayValue: asset.year != null ? String(asset.year) : null,
+      draftValue: asset.year != null ? String(asset.year) : "",
+      inputType: "number",
+      placeholder: "2020",
+    },
+    {
+      key: "insuranceVehNumber",
+      label: "Ins. Veh #",
+      displayValue: asset.insuranceVehNumber != null ? String(asset.insuranceVehNumber) : null,
+      draftValue: asset.insuranceVehNumber != null ? String(asset.insuranceVehNumber) : "",
+      inputType: "number",
+      placeholder: "12345",
+    },
+    {
+      key: "bodyTypeCode",
       label: "Body type",
-      value: BODY_TYPE_LABELS[asset.bodyTypeCode] ?? asset.bodyTypeCode,
-    });
-  if (asset.statedValueCents != null)
-    rows.push({
+      displayValue: asset.bodyTypeCode != null ? (BODY_TYPE_LABELS[asset.bodyTypeCode] ?? asset.bodyTypeCode) : null,
+      draftValue: asset.bodyTypeCode ?? "",
+      isSelect: true,
+    },
+    {
+      key: "statedValueCents",
       label: "Stated value",
-      value: new Intl.NumberFormat("en-US", {
-        style: "currency",
-        currency: "USD",
-        maximumFractionDigits: 0,
-      }).format(asset.statedValueCents / 100),
-    });
-  if (asset.gvwGcwLbs != null)
-    rows.push({
+      displayValue: asset.statedValueCents != null
+        ? new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 }).format(asset.statedValueCents / 100)
+        : null,
+      draftValue: asset.statedValueCents != null ? String(Math.round(asset.statedValueCents / 100)) : "",
+      inputType: "number",
+      placeholder: "0",
+    },
+    {
+      key: "gvwGcwLbs",
       label: "GVW/GCW",
-      value: `${new Intl.NumberFormat("en-US").format(asset.gvwGcwLbs)} lbs`,
-    });
-  if (asset.garagingState != null)
-    rows.push({ label: "Garaged", value: asset.garagingState });
-  if (asset.operatingRadiusMiles != null)
-    rows.push({ label: "Radius", value: `${asset.operatingRadiusMiles} mi` });
+      displayValue: asset.gvwGcwLbs != null ? `${new Intl.NumberFormat("en-US").format(asset.gvwGcwLbs)} lbs` : null,
+      draftValue: asset.gvwGcwLbs != null ? String(asset.gvwGcwLbs) : "",
+      inputType: "number",
+      placeholder: "0",
+    },
+    {
+      key: "garagingState",
+      label: "Garaged",
+      displayValue: asset.garagingState,
+      draftValue: asset.garagingState ?? "",
+      inputType: "text",
+      placeholder: "FL",
+    },
+  ];
 
   return (
     <div className="rounded-md border border-dashed bg-muted/30 p-2.5">
       <div className="mb-1.5 text-[10px] font-mono uppercase tracking-wider text-muted-foreground">
         Insurance Schedule
       </div>
-      <div className="flex flex-wrap gap-x-4 gap-y-1">
-        {rows.map((r) => (
-          <div key={r.label} className="flex items-baseline gap-1 text-xs">
-            <span className="text-muted-foreground">{r.label}:</span>
-            <span className="font-medium text-foreground">{r.value}</span>
+      <div className="flex flex-wrap gap-x-4 gap-y-1.5">
+        {fields.map((f) =>
+          editingField === f.key ? (
+            <div key={f.key} className="flex items-center gap-1.5">
+              <span className="shrink-0 text-[10px] text-muted-foreground">{f.label}:</span>
+              {f.isSelect ? (
+                <Select value={draft} onValueChange={(v) => setDraft(v)}>
+                  <SelectTrigger className="h-6 w-36 text-xs">
+                    <SelectValue placeholder="Select…" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {Object.entries(BODY_TYPE_LABELS).map(([code, label]) => (
+                      <SelectItem key={code} value={code}>{label}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              ) : (
+                <Input
+                  className="h-6 w-24 text-xs"
+                  type={f.inputType}
+                  value={draft}
+                  onChange={(e) => setDraft(e.target.value)}
+                  placeholder={f.placeholder}
+                  autoFocus
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") save(f.key);
+                    if (e.key === "Escape") cancel();
+                  }}
+                />
+              )}
+              <Button size="sm" className="h-6 px-1.5 text-xs" onClick={() => save(f.key)} disabled={isPending}>
+                {isPending ? "…" : "✓"}
+              </Button>
+              <Button size="sm" variant="ghost" className="h-6 px-1.5 text-xs" onClick={cancel} disabled={isPending}>
+                ✕
+              </Button>
+            </div>
+          ) : (
+            <div key={f.key} className="group/ins flex items-baseline gap-1 text-xs">
+              <span className="text-muted-foreground">{f.label}:</span>
+              {f.displayValue != null ? (
+                <span className="font-medium text-foreground">{f.displayValue}</span>
+              ) : (
+                <span className="italic text-muted-foreground/50">—</span>
+              )}
+              <button
+                type="button"
+                onClick={() => startEdit(f.key, f.draftValue)}
+                className="ml-0.5 inline-flex h-3.5 w-3.5 items-center justify-center rounded opacity-0 transition-opacity hover:bg-accent hover:text-foreground group-hover/ins:opacity-100"
+                title={`Edit ${f.label}`}
+              >
+                <Pencil className="h-2 w-2" />
+              </button>
+            </div>
+          ),
+        )}
+        {asset.operatingRadiusMiles != null && (
+          <div className="flex items-baseline gap-1 text-xs">
+            <span className="text-muted-foreground">Radius:</span>
+            <span className="font-medium text-foreground">{asset.operatingRadiusMiles} mi</span>
           </div>
-        ))}
+        )}
       </div>
     </div>
   );

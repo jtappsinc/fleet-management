@@ -51,6 +51,12 @@ type MaintenanceKind = "SCHEDULED" | "REPAIR" | "INSPECTION";
 const truckExtensionSchema = z
   .object({
     vehicleType: z.enum(["TRUCK", "TRAILER"]).optional(),
+    year: z.number().int().min(1900).max(2100).nullish(),
+    insuranceVehNumber: z.number().int().nullish(),
+    statedValueCents: z.number().int().min(0).nullish(),
+    gvwGcwLbs: z.number().int().min(0).nullish(),
+    garagingState: z.string().max(2).nullish(),
+    bodyTypeCode: z.string().max(10).nullish(),
   })
   .passthrough();
 
@@ -201,8 +207,15 @@ router.patch(
       patch.serviceIntervalMiles = d.serviceIntervalMiles;
 
     const truckExt = truckExtensionSchema.safeParse(req.body);
-    if (truckExt.success && truckExt.data.vehicleType !== undefined) {
-      patch.vehicleType = truckExt.data.vehicleType;
+    if (truckExt.success) {
+      const ext = truckExt.data;
+      if (ext.vehicleType !== undefined) patch.vehicleType = ext.vehicleType;
+      if (ext.year !== undefined) patch.year = ext.year ?? null;
+      if (ext.insuranceVehNumber !== undefined) patch.insuranceVehNumber = ext.insuranceVehNumber ?? null;
+      if (ext.statedValueCents !== undefined) patch.statedValueCents = ext.statedValueCents ?? null;
+      if (ext.gvwGcwLbs !== undefined) patch.gvwGcwLbs = ext.gvwGcwLbs ?? null;
+      if (ext.garagingState !== undefined) patch.garagingState = ext.garagingState ?? null;
+      if (ext.bodyTypeCode !== undefined) patch.bodyTypeCode = ext.bodyTypeCode ?? null;
     }
 
     const [row] = await db
