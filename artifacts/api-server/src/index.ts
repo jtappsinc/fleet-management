@@ -1,12 +1,16 @@
 import app from "./app";
 import { logger } from "./lib/logger";
 import { syncDefaultPermissionMatrix } from "./lib/rbac/syncMatrix";
+import { sql } from "drizzle-orm";
 import {
+  db,
   seedIfEmpty,
   backfillFleetData,
   backfillDemoData,
   backfillDepartments,
   importRealCrews,
+  cleanupDemoUsers,
+  crewMembersTable,
 } from "@workspace/db";
 
 const rawPort = process.env["PORT"];
@@ -82,6 +86,21 @@ async function startup() {
   } catch (err) {
     logger.error({ err }, "Failed to import real crews on boot");
   }
+
+  // Remove any demo/test user accounts that may have been seeded
+  // in a previous environment. Idempotent — no-op if they don't exist.
+  // Runs last so it always wins over any backfill that re-inserts them.
+  // Throws on failure (e.g. missing admin) so boot fails loudly.
+  await cleanupDemoUsers();
+
+  // Confirm crew-members table is clean (user-to-crew assignments).
+  const [{ count: crewMemberCount }] = await db
+    .select({ count: sql<number>`count(*)::int` })
+    .from(crewMembersTable);
+  logger.info(
+    { crewMemberCount },
+    "crew_members row count confirmed on boot",
+  );
 }
 
 startup()

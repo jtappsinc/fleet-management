@@ -4,8 +4,11 @@ import {
   trucksTable,
   equipmentTable,
   maintenanceLogsTable,
+  crewsTable,
 } from "./schema";
 import { isDemoMode } from "./demoMode";
+import * as path from "path";
+import * as xlsx from "xlsx";
 
 /**
  * Idempotent backfill that enriches the demo fleet with the new asset-registry
@@ -48,6 +51,7 @@ export async function backfillFleetData(): Promise<void> {
     await cleanupDemoEquipment();
     await cleanupDemoMaintenanceLogs();
     await ensureNewTrucks();
+    await backfillEquipmentCrewAssignments();
   }
 }
 
@@ -956,6 +960,111 @@ async function ensureExtraTrailersAndHandhelds() {
         .set({ slug: makeAssetSlug("equip", row.id, row.name) })
         .where(eq(equipmentTable.id, row.id));
     }
+  }
+}
+
+/**
+ * Normalise the crew name variants used in the spreadsheet to the canonical
+ * names stored in the DB.  Keys are lower-cased for case-insensitive lookup.
+ */
+const SPREADSHEET_CREW_NAME_MAP: Record<string, string> = {
+  "adrian - grapple": "Adrian (Grapple)",
+  alex: "Alex",
+  anrhony: "Anthony", // typo in spreadsheet
+  anthony: "Anthony",
+  bishop: "Bishop",
+  calixto: "Calixto",
+  celso: "Celso",
+  christian: "Christian",
+  cirilo: "Cirilo",
+  dave: "Dave",
+  "jeff long": "Jeff Long",
+  lawn: "Lawn",
+  leodan: "Leodan",
+  melecio: "Melecio",
+  melesio: "Melecio", // alternate spelling in spreadsheet
+  miguel: "Miguel",
+  "miguel a": "Miguel A",
+  mike: "Mike",
+  reynier: "Reynier",
+  "rob c": "Rob C",
+  "tim's tree": "Tim's Trees",
+  "tim's trees": "Tim's Trees",
+  wilber: "Wilber",
+  williams: "Williams",
+  yoselande: "Yoslande", // alternate spelling
+  yoslande: "Yoslande",
+};
+
+/**
+ * Reads the equipment spreadsheet that was uploaded with crew assignments and
+ * writes those assignments to the DB, matched by serial number.
+ *
+ * Idempotent — skips rows where assigned_crew_id already matches the desired
+ * value, so re-running on every boot is cheap after the first pass.
+ * Crew value "Broken" is skipped — it marks damaged equipment, not a crew.
+ */
+async function backfillEquipmentCrewAssignments(): Promise<void> {
+  const spreadsheetPath = path.resolve(
+    process.cwd(),
+    "../../attached_assets/asset-3_(1)_1780420281065.xlsx",
+  );
+
+  let workbook: xlsx.WorkBook;
+  try {
+    workbook = xlsx.readFile(spreadsheetPath);
+  } catch {
+    // Spreadsheet not present in this environment — skip silently.
+    return;
+  }
+
+  const sheet = workbook.Sheets[workbook.SheetNames[0]];
+  const rows = xlsx.utils.sheet_to_json<Record<string, string>>(sheet, {
+    defval: "",
+  });
+
+  // Build serial → canonical crew name from spreadsheet rows.
+  const serialToCrewName = new Map<string, string>();
+  for (const row of rows) {
+    const serial = String(row["Serial No"] ?? "").trim();
+    const rawCrew = String(row["Crew"] ?? "").trim();
+    if (!serial || !rawCrew || rawCrew.toLowerCase() === "broken") continue;
+    const canonicalCrew = SPREADSHEET_CREW_NAME_MAP[rawCrew.toLowerCase()];
+    if (!canonicalCrew) continue; // unknown crew name — skip
+    // Last occurrence wins when a serial appears twice (duplicate rows).
+    serialToCrewName.set(serial, canonicalCrew);
+  }
+
+  if (serialToCrewName.size === 0) return;
+
+  // Load DB lookup tables.
+  const dbCrews = await db
+    .select({ id: crewsTable.id, name: crewsTable.name })
+    .from(crewsTable);
+  const crewNameToId = new Map(dbCrews.map((c) => [c.name, c.id]));
+
+  const dbEquipment = await db
+    .select({ id: equipmentTable.id, serial: equipmentTable.serial, assignedCrewId: equipmentTable.assignedCrewId })
+    .from(equipmentTable);
+  const serialToEquip = new Map(
+    dbEquipment
+      .filter((e) => e.serial != null && e.serial !== "")
+      .map((e) => [e.serial as string, e]),
+  );
+
+  // Apply assignments.
+  for (const [serial, crewName] of serialToCrewName) {
+    const equip = serialToEquip.get(serial);
+    if (!equip) continue; // serial not in DB
+    const crewId = crewNameToId.get(crewName);
+    if (!crewId) continue; // crew not in DB
+
+    if (equip.assignedCrewId === crewId) continue; // already correct — no-op
+
+    await db
+      .update(equipmentTable)
+      .set({ assignedCrewId: crewId })
+      .where(eq(equipmentTable.id, equip.id));
   }
 }
 

@@ -232,6 +232,14 @@ export interface TruckPatchBody {
   purchaseDate?: string | null;
   currentMileage?: number | null;
   serviceIntervalMiles?: number | null;
+  vehicleType?: string | null;
+  year?: number | null;
+  insuranceVehNumber?: number | null;
+  statedValueCents?: number | null;
+  gvwGcwLbs?: number | null;
+  garagingState?: string | null;
+  bodyTypeCode?: string | null;
+  operatingRadiusMiles?: number | null;
 }
 
 export interface TruckResponse {

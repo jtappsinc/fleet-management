@@ -6,3 +6,4 @@ export { backfillDemoData } from "./backfillDemoData";
 export { backfillDepartments } from "./backfillDepartments";
 export { isDemoMode } from "./demoMode";
 export { importRealCrews } from "./importRealCrews";
+export { cleanupDemoUsers } from "./cleanupDemoUsers";

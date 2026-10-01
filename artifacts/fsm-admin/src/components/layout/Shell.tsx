@@ -17,6 +17,8 @@ import {
   Truck,
   Sparkles,
   Shield,
+  Download,
+  Loader2,
 } from "lucide-react";
 import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
 import {
@@ -173,7 +175,30 @@ function ShellInner({ children }: { children: React.ReactNode }) {
   const [location, setLocation] = useLocation();
   const currentSearch = useUrlSearch();
   const [isMobileNavOpen, setIsMobileNavOpen] = useState(false);
+  const [isExporting, setIsExporting] = useState(false);
   const logoutMutation = useLogout();
+
+  const handleExport = async () => {
+    setIsExporting(true);
+    try {
+      const res = await fetch("/api/admin/export", { credentials: "include" });
+      if (!res.ok) throw new Error("Export failed");
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      const today = new Date().toISOString().slice(0, 10);
+      a.href = url;
+      a.download = `joshua-tree-export-${today}.xlsx`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    } catch {
+      // Silently ignore — user will see nothing happened and can retry.
+    } finally {
+      setIsExporting(false);
+    }
+  };
   const queryClient = useQueryClient();
   // Pending-delete badge powering the "Delete Approvals" nav entry.
   // The hook is server-gated to ADMIN, so it returns { count: 0 }
@@ -296,6 +321,22 @@ function ShellInner({ children }: { children: React.ReactNode }) {
             )}
           </div>
         </div>
+        {role === "ADMIN" && (
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={isExporting}
+            className="mb-2 w-full justify-start border-sidebar-border/60 bg-transparent text-sidebar-foreground transition-colors hover:bg-sidebar-accent hover:text-sidebar-accent-foreground disabled:opacity-60"
+            onClick={handleExport}
+          >
+            {isExporting ? (
+              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+            ) : (
+              <Download className="mr-2 h-4 w-4" />
+            )}
+            {isExporting ? "Exporting…" : "Download Backup"}
+          </Button>
+        )}
         <Button
           variant="outline"
           size="sm"
