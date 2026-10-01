@@ -86,6 +86,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import { deleteOutcomeToast } from "@/lib/delete-outcome";
 import { DELETE_REQUESTS_PENDING_COUNT_KEY } from "@/lib/extra-api";
+import { EditAssetButton } from "@/components/EditAssetDialog";
 
 const usd = (cents: number | null | undefined) =>
   new Intl.NumberFormat("en-US", {
@@ -784,7 +785,7 @@ export function AssetRegistry() {
                 <TableHead className="text-right">
                   Spend · {periodLabel}
                 </TableHead>
-                <TableHead className="w-[100px]" />
+                <TableHead className="w-[150px]" />
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -964,11 +965,14 @@ export function AssetRegistry() {
                           </Link>
                         </Button>
                         {canEditFleet && (
-                          <DeleteAssetButton
-                            kind={a.kind}
-                            id={a.id}
-                            name={a.name}
-                          />
+                          <>
+                            <EditAssetButton asset={a} />
+                            <DeleteAssetButton
+                              kind={a.kind}
+                              id={a.id}
+                              name={a.name}
+                            />
+                          </>
                         )}
                       </div>
                     </TableCell>

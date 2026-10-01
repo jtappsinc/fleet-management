@@ -7,8 +7,10 @@ import {
   useCrewDetail,
   useCreateCrew,
   useUpdateCrew,
+  useDeleteCrew,
   useListCrewLeadCandidates,
   getCrewDetailKey,
+  DELETE_REQUESTS_PENDING_COUNT_KEY,
   type Crew,
   type CrewMember,
   type CrewLeadCandidate,
@@ -34,7 +36,20 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Spinner } from "@/components/ui/spinner";
-import { HardHat, Truck, Wrench, Users, ChevronRight, Plus, UserCog, Search, Building2 } from "lucide-react";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "@/components/ui/alert-dialog";
+import { useToast } from "@/hooks/use-toast";
+import { deleteOutcomeToast } from "@/lib/delete-outcome";
+import { HardHat, Truck, Wrench, Users, ChevronRight, Plus, UserCog, Search, Building2, Trash2 } from "lucide-react";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { cn } from "@/lib/utils";
 
@@ -137,9 +152,11 @@ function CrewCard({
 function CrewDetailPanel({
   crewId,
   canEdit,
+  onDeleted,
 }: {
   crewId: number;
   canEdit: boolean;
+  onDeleted?: () => void;
 }) {
   const { data, isLoading, error } = useCrewDetail(crewId);
   const { data: deptsData } = useListDepartments();
@@ -302,7 +319,94 @@ function CrewDetailPanel({
           </div>
         )}
       </section>
+
+      {canEdit && (
+        <section className="rounded-md border border-destructive/30 bg-destructive/5 px-3 py-3">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <div className="min-w-0">
+              <div className="text-xs font-mono uppercase tracking-widest text-destructive/80">
+                Danger zone
+              </div>
+              <p className="mt-1 text-xs text-muted-foreground">
+                Deleting a crew unassigns its trucks, equipment and jobs — it
+                doesn't delete them.
+              </p>
+            </div>
+            <DeleteCrewButton crewId={crew.id} name={crew.name} onDeleted={onDeleted} />
+          </div>
+        </section>
+      )}
     </div>
+  );
+}
+
+function DeleteCrewButton({
+  crewId,
+  name,
+  onDeleted,
+}: {
+  crewId: number;
+  name: string;
+  onDeleted?: () => void;
+}) {
+  const queryClient = useQueryClient();
+  const { toast } = useToast();
+  const deleteCrew = useDeleteCrew();
+
+  function handleDelete() {
+    deleteCrew.mutate(crewId, {
+      onSuccess: (result) => {
+        queryClient.invalidateQueries({ queryKey: ["crews"] });
+        queryClient.invalidateQueries({ queryKey: getCrewDetailKey(crewId) });
+        queryClient.invalidateQueries({ queryKey: DELETE_REQUESTS_PENDING_COUNT_KEY });
+        // Assets referencing this crew now show "Unassigned".
+        queryClient.invalidateQueries({ queryKey: ["/api/assets"] });
+        toast(deleteOutcomeToast(result, `${name} deleted`));
+        onDeleted?.();
+      },
+      onError: () =>
+        toast({
+          title: "Error deleting crew",
+          description: `Couldn't delete ${name}. Please try again.`,
+          variant: "destructive",
+        }),
+    });
+  }
+
+  return (
+    <AlertDialog>
+      <AlertDialogTrigger asChild>
+        <Button
+          size="sm"
+          variant="outline"
+          className="gap-1.5 border-destructive/40 text-destructive hover:bg-destructive/10 hover:text-destructive"
+          data-testid={`crew-delete-${crewId}`}
+        >
+          <Trash2 className="h-3.5 w-3.5" />
+          Delete crew
+        </Button>
+      </AlertDialogTrigger>
+      <AlertDialogContent className="w-[calc(100vw-2rem)] sm:max-w-md">
+        <AlertDialogHeader>
+          <AlertDialogTitle>Delete this crew?</AlertDialogTitle>
+          <AlertDialogDescription>
+            Remove <span className="font-semibold">{name}</span>. Members,
+            trucks, equipment and jobs attached to it will be unassigned, not
+            deleted. This can't be undone.
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter>
+          <AlertDialogCancel disabled={deleteCrew.isPending}>Cancel</AlertDialogCancel>
+          <AlertDialogAction
+            onClick={handleDelete}
+            disabled={deleteCrew.isPending}
+            className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+          >
+            {deleteCrew.isPending ? "Deleting…" : "Delete"}
+          </AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
   );
 }
 
@@ -710,7 +814,11 @@ export function Crews() {
             </DialogTitle>
           </DialogHeader>
           {selectedCrewId !== null && (
-            <CrewDetailPanel crewId={selectedCrewId} canEdit={canCreateCrew} />
+            <CrewDetailPanel
+              crewId={selectedCrewId}
+              canEdit={canCreateCrew}
+              onDeleted={() => setSelectedCrewId(null)}
+            />
           )}
         </DialogContent>
       </Dialog>
