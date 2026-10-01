@@ -1,8 +1,9 @@
 import { useState } from "react";
-import { useParams, Link } from "wouter";
+import { useParams, Link, useLocation } from "wouter";
 import { QRCodeSVG } from "qrcode.react";
 import { useQueryClient } from "@tanstack/react-query";
 import {
+  useGetMe,
   useGetAssetBySlug,
   getGetAssetBySlugQueryKey,
   useCreateUsageReading,
@@ -16,6 +17,8 @@ import {
   useListDepartments,
   useUpdateTruck,
   useUpdateEquipment,
+  useDeleteTruck,
+  useDeleteEquipment,
 } from "@workspace/api-client-react";
 import {
   useListCrews,
@@ -29,8 +32,30 @@ import {
   useCheckInAsset,
   useListCrewLeadCandidates,
   useUpdateEquipmentExt,
+  useEquipmentItems,
+  useCreateEquipmentItem,
+  useUpdateEquipmentItem,
+  useDeleteEquipmentItem,
+  getEquipmentItemsKey,
+  useUpdateUsageReading,
+  useDeleteUsageReading,
+  DELETE_REQUESTS_PENDING_COUNT_KEY,
   type AssetExt,
+  type EquipmentItem,
 } from "@/lib/extra-api";
+import { EditAssetButton } from "@/components/EditAssetDialog";
+import { deleteOutcomeToast } from "@/lib/delete-outcome";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "@/components/ui/alert-dialog";
 import { useDepartmentFilter } from "@/context/DepartmentContext";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -83,6 +108,9 @@ import {
   UserCheck,
   X,
   Pencil,
+  Trash2,
+  Package,
+  Check,
 } from "lucide-react";
 
 const usd = (cents: number | null | undefined) =>
@@ -145,6 +173,7 @@ export function AssetActionPage() {
   const params = useParams<{ slug: string }>();
   const slug = params.slug;
   const { data, isLoading } = useGetAssetBySlug(slug);
+  const { data: meData } = useGetMe();
 
   if (isLoading) {
     return (
@@ -175,6 +204,10 @@ export function AssetActionPage() {
   // "NONE") wins.
   const asset = data.asset as Omit<typeof data.asset, "usageUnit"> & AssetExt;
   const logs = data.logs ?? [];
+  const recentReadings = data.recentReadings ?? [];
+  const canEditAsset =
+    meData?.user?.permissions?.[asset.kind === "TRUCK" ? "fleet.trucks" : "fleet.equipment"]?.canEdit ?? false;
+  const canEditMaintenance = meData?.user?.permissions?.["fleet.maintenance"]?.canEdit ?? false;
   const qrUrl = `${window.location.origin}${window.location.pathname.replace(/\/assets\/.*/, "")}/assets/${asset.slug}`;
   const tracksUsage = asset.usageUnit !== "NONE";
   const CategoryIcon =
@@ -202,12 +235,20 @@ export function AssetActionPage() {
             <ArrowLeft className="mr-2 h-4 w-4" /> Back to registry
           </Link>
         </Button>
-        <Badge
-          variant="outline"
-          className="font-mono text-[10px] uppercase tracking-wider"
-        >
-          {categoryDisplayLabel} · {asset.slug}
-        </Badge>
+        <div className="flex items-center gap-2">
+          <Badge
+            variant="outline"
+            className="hidden font-mono text-[10px] uppercase tracking-wider sm:inline-flex"
+          >
+            {categoryDisplayLabel} · {asset.slug}
+          </Badge>
+          {canEditAsset && (
+            <>
+              <EditAssetButton asset={asset} variant="button" />
+              <DeleteAssetButton kind={asset.kind} id={asset.id} name={asset.name} />
+            </>
+          )}
+        </div>
       </div>
 
       <Card className="border-border/60">
@@ -406,6 +447,17 @@ export function AssetActionPage() {
               Usage and scheduled service don't apply to {categoryDisplayLabel.toLowerCase()} items.
               Use the assignment and status controls below.
             </div>
+          )}
+          {tracksUsage && (
+            <UsageReadingsCard
+              slug={asset.slug}
+              usageUnit={asset.usageUnit as "MILES" | "HOURS"}
+              readings={recentReadings}
+              canEdit={canEditMaintenance}
+            />
+          )}
+          {asset.kind === "EQUIPMENT" && (
+            <EquipmentItemsCard equipmentId={asset.id} canEdit={canEditAsset} />
           )}
           <AssignCrewCard asset={asset} />
           <ChangeStatusCard asset={asset} />
@@ -1602,6 +1654,9 @@ function InsuranceInfoStrip({
       data = { garagingState: trimmed === "" ? null : trimmed.toUpperCase().slice(0, 2) };
     } else if (field === "bodyTypeCode") {
       data = { bodyTypeCode: trimmed === "" ? null : trimmed };
+    } else if (field === "operatingRadiusMiles") {
+      const n = parseInt(trimmed.replace(/,/g, ""));
+      data = { operatingRadiusMiles: trimmed === "" ? null : Number.isFinite(n) ? n : null };
     }
     updateTruck.mutate(
       { id: asset.id, data: data as Parameters<typeof updateTruck.mutate>[0]["data"] },
@@ -1677,6 +1732,14 @@ function InsuranceInfoStrip({
       inputType: "text",
       placeholder: "FL",
     },
+    {
+      key: "operatingRadiusMiles",
+      label: "Radius",
+      displayValue: asset.operatingRadiusMiles != null ? `${asset.operatingRadiusMiles} mi` : null,
+      draftValue: asset.operatingRadiusMiles != null ? String(asset.operatingRadiusMiles) : "",
+      inputType: "number",
+      placeholder: "0",
+    },
   ];
 
   return (
@@ -1739,12 +1802,6 @@ function InsuranceInfoStrip({
               </button>
             </div>
           ),
-        )}
-        {asset.operatingRadiusMiles != null && (
-          <div className="flex items-baseline gap-1 text-xs">
-            <span className="text-muted-foreground">Radius:</span>
-            <span className="font-medium text-foreground">{asset.operatingRadiusMiles} mi</span>
-          </div>
         )}
       </div>
     </div>
@@ -2119,6 +2176,523 @@ function PhotoUploadCard({
           identify the asset visually from the registry, QR scan, and
           checkout flow.
         </p>
+      </CardContent>
+    </Card>
+  );
+}
+
+// ----------------------------------------------------------------------
+// Record editing — delete the asset from its own page, correct / remove
+// usage readings, and manage the consumables attached to equipment.
+// ----------------------------------------------------------------------
+
+function DeleteAssetButton({
+  kind,
+  id,
+  name,
+}: {
+  kind: "TRUCK" | "EQUIPMENT";
+  id: number;
+  name: string;
+}) {
+  const queryClient = useQueryClient();
+  const { toast } = useToast();
+  const [, navigate] = useLocation();
+  const deleteTruck = useDeleteTruck();
+  const deleteEquipment = useDeleteEquipment();
+  const isPending = deleteTruck.isPending || deleteEquipment.isPending;
+
+  function handleDelete() {
+    const onSuccess = (result: unknown) => {
+      queryClient.invalidateQueries({ queryKey: getListAssetsQueryKey() });
+      queryClient.invalidateQueries({ queryKey: getGetFleetPulseQueryKey() });
+      queryClient.invalidateQueries({ queryKey: DELETE_REQUESTS_PENDING_COUNT_KEY });
+      toast(deleteOutcomeToast(result, `${name} deleted`));
+      // Only leave the page when the row is actually gone; a queued
+      // request means the asset still exists until an admin approves.
+      const queued = !!(result && typeof result === "object" && (result as { queued?: boolean }).queued);
+      if (!queued) navigate("/assets");
+    };
+    const onError = () =>
+      toast({
+        title: "Error deleting asset",
+        description: `Couldn't delete ${name}. Please try again.`,
+        variant: "destructive",
+      });
+    if (kind === "TRUCK") deleteTruck.mutate({ id }, { onSuccess, onError });
+    else deleteEquipment.mutate({ id }, { onSuccess, onError });
+  }
+
+  return (
+    <AlertDialog>
+      <AlertDialogTrigger asChild>
+        <Button
+          variant="outline"
+          size="sm"
+          className="gap-1.5 border-destructive/40 text-destructive hover:bg-destructive/10 hover:text-destructive"
+          data-testid="asset-delete-button"
+        >
+          <Trash2 className="h-3.5 w-3.5" /> Delete
+        </Button>
+      </AlertDialogTrigger>
+      <AlertDialogContent className="w-[calc(100vw-2rem)] sm:max-w-md">
+        <AlertDialogHeader>
+          <AlertDialogTitle>Delete this asset?</AlertDialogTitle>
+          <AlertDialogDescription>
+            Remove <span className="font-semibold">{name}</span> and its
+            maintenance ledger, usage readings and checkout history from the
+            registry. This can't be undone.
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter>
+          <AlertDialogCancel disabled={isPending}>Cancel</AlertDialogCancel>
+          <AlertDialogAction
+            onClick={handleDelete}
+            disabled={isPending}
+            className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+          >
+            {isPending ? "Deleting…" : "Delete"}
+          </AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
+  );
+}
+
+type ReadingRow = {
+  id: number;
+  mileage?: number | null;
+  hours?: number | null;
+  recordedAt: string | Date;
+  notes?: string | null;
+};
+
+function UsageReadingsCard({
+  slug,
+  usageUnit,
+  readings,
+  canEdit,
+}: {
+  slug: string;
+  usageUnit: "MILES" | "HOURS";
+  readings: ReadingRow[];
+  canEdit: boolean;
+}) {
+  const queryClient = useQueryClient();
+  const { toast } = useToast();
+  const update = useUpdateUsageReading();
+  const remove = useDeleteUsageReading();
+  const [editingId, setEditingId] = useState<number | null>(null);
+  const [draftValue, setDraftValue] = useState("");
+  const [draftNotes, setDraftNotes] = useState("");
+  const unit = usageUnit === "MILES" ? "mi" : "hrs";
+
+  const invalidate = () => {
+    queryClient.invalidateQueries({ queryKey: getGetAssetBySlugQueryKey(slug) });
+    queryClient.invalidateQueries({ queryKey: getListAssetsQueryKey() });
+    queryClient.invalidateQueries({ queryKey: getGetFleetPulseQueryKey() });
+  };
+
+  function startEdit(r: ReadingRow) {
+    setEditingId(r.id);
+    setDraftValue(String((usageUnit === "MILES" ? r.mileage : r.hours) ?? ""));
+    setDraftNotes(r.notes ?? "");
+  }
+
+  function save(r: ReadingRow) {
+    const n = parseInt(draftValue, 10);
+    if (!Number.isFinite(n) || n < 0) {
+      toast({ title: "Enter a whole number ≥ 0", variant: "destructive" });
+      return;
+    }
+    update.mutate(
+      {
+        id: r.id,
+        data: {
+          ...(usageUnit === "MILES" ? { mileage: n } : { hours: n }),
+          notes: draftNotes.trim() || null,
+        },
+      },
+      {
+        onSuccess: () => {
+          invalidate();
+          toast({ title: "Reading updated" });
+          setEditingId(null);
+        },
+        onError: () => toast({ title: "Could not update reading", variant: "destructive" }),
+      },
+    );
+  }
+
+  function del(r: ReadingRow) {
+    remove.mutate(r.id, {
+      onSuccess: (result) => {
+        invalidate();
+        queryClient.invalidateQueries({ queryKey: DELETE_REQUESTS_PENDING_COUNT_KEY });
+        toast(deleteOutcomeToast(result, "Reading deleted"));
+      },
+      onError: () => toast({ title: "Could not delete reading", variant: "destructive" }),
+    });
+  }
+
+  return (
+    <Card className="border-border/60" data-testid="usage-readings-card">
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2 text-base">
+          <Gauge className="h-4 w-4" /> Recent readings
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="p-0">
+        {readings.length === 0 ? (
+          <div className="px-4 py-6 text-center text-sm text-muted-foreground">
+            No readings logged yet.
+          </div>
+        ) : (
+          <ul className="divide-y">
+            {readings.map((r) => {
+              const value = (usageUnit === "MILES" ? r.mileage : r.hours) ?? 0;
+              const editing = editingId === r.id;
+              return (
+                <li key={r.id} className="flex flex-wrap items-center gap-2 px-4 py-2.5" data-testid={`reading-${r.id}`}>
+                  {editing ? (
+                    <>
+                      <Input
+                        type="number"
+                        min="0"
+                        step="1"
+                        className="h-8 w-32 font-mono text-sm"
+                        value={draftValue}
+                        onChange={(e) => setDraftValue(e.target.value)}
+                        autoFocus
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter") save(r);
+                          if (e.key === "Escape") setEditingId(null);
+                        }}
+                      />
+                      <span className="text-xs text-muted-foreground">{unit}</span>
+                      <Input
+                        className="h-8 min-w-[10rem] flex-1 text-sm"
+                        placeholder="Notes"
+                        value={draftNotes}
+                        onChange={(e) => setDraftNotes(e.target.value)}
+                      />
+                      <Button size="sm" className="h-8" onClick={() => save(r)} disabled={update.isPending}>
+                        <Check className="mr-1 h-3.5 w-3.5" /> Save
+                      </Button>
+                      <Button size="sm" variant="ghost" className="h-8" onClick={() => setEditingId(null)} disabled={update.isPending}>
+                        Cancel
+                      </Button>
+                    </>
+                  ) : (
+                    <>
+                      <span className="font-mono text-sm font-semibold">
+                        {num(value)} <span className="font-normal text-muted-foreground">{unit}</span>
+                      </span>
+                      <span className="text-xs text-muted-foreground">
+                        {new Date(r.recordedAt).toLocaleString()}
+                      </span>
+                      {r.notes && (
+                        <span className="truncate text-xs text-muted-foreground/80">— {r.notes}</span>
+                      )}
+                      {canEdit && (
+                        <span className="ml-auto flex items-center gap-0.5">
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-7 w-7"
+                            title="Edit reading"
+                            aria-label="Edit reading"
+                            onClick={() => startEdit(r)}
+                          >
+                            <Pencil className="h-3.5 w-3.5" />
+                          </Button>
+                          <AlertDialog>
+                            <AlertDialogTrigger asChild>
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                className="h-7 w-7 text-destructive hover:bg-destructive/10 hover:text-destructive"
+                                title="Delete reading"
+                                aria-label="Delete reading"
+                              >
+                                <Trash2 className="h-3.5 w-3.5" />
+                              </Button>
+                            </AlertDialogTrigger>
+                            <AlertDialogContent className="w-[calc(100vw-2rem)] sm:max-w-sm">
+                              <AlertDialogHeader>
+                                <AlertDialogTitle>Delete this reading?</AlertDialogTitle>
+                                <AlertDialogDescription>
+                                  Removes the {num(value)} {unit} entry. If it was the
+                                  highest reading, the asset's current {usageUnit === "MILES" ? "odometer" : "hours"} is
+                                  recalculated from what's left.
+                                </AlertDialogDescription>
+                              </AlertDialogHeader>
+                              <AlertDialogFooter>
+                                <AlertDialogCancel>Cancel</AlertDialogCancel>
+                                <AlertDialogAction
+                                  onClick={() => del(r)}
+                                  className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                                >
+                                  Delete
+                                </AlertDialogAction>
+                              </AlertDialogFooter>
+                            </AlertDialogContent>
+                          </AlertDialog>
+                        </span>
+                      )}
+                    </>
+                  )}
+                </li>
+              );
+            })}
+          </ul>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+function EquipmentItemsCard({
+  equipmentId,
+  canEdit,
+}: {
+  equipmentId: number;
+  canEdit: boolean;
+}) {
+  const queryClient = useQueryClient();
+  const { toast } = useToast();
+  const { data, isLoading } = useEquipmentItems(equipmentId);
+  const create = useCreateEquipmentItem(equipmentId);
+  const update = useUpdateEquipmentItem(equipmentId);
+  const remove = useDeleteEquipmentItem(equipmentId);
+  const items = data?.items ?? [];
+
+  const [newName, setNewName] = useState("");
+  const [newQty, setNewQty] = useState("1");
+  const [newUnit, setNewUnit] = useState("");
+  const [editingId, setEditingId] = useState<number | null>(null);
+  const [draft, setDraft] = useState({ name: "", quantity: "1", unit: "", notes: "" });
+
+  const invalidate = () =>
+    queryClient.invalidateQueries({ queryKey: getEquipmentItemsKey(equipmentId) });
+
+  function add(e: React.FormEvent) {
+    e.preventDefault();
+    const name = newName.trim();
+    const qty = parseInt(newQty, 10);
+    if (!name) {
+      toast({ title: "Item name is required", variant: "destructive" });
+      return;
+    }
+    if (!Number.isFinite(qty) || qty < 1) {
+      toast({ title: "Quantity must be at least 1", variant: "destructive" });
+      return;
+    }
+    create.mutate(
+      { name, quantity: qty, unit: newUnit.trim() || undefined },
+      {
+        onSuccess: () => {
+          invalidate();
+          setNewName("");
+          setNewQty("1");
+          setNewUnit("");
+          toast({ title: `${name} added` });
+        },
+        onError: () => toast({ title: "Could not add item", variant: "destructive" }),
+      },
+    );
+  }
+
+  function startEdit(it: EquipmentItem) {
+    setEditingId(it.id);
+    setDraft({
+      name: it.name,
+      quantity: String(it.quantity),
+      unit: it.unit ?? "",
+      notes: it.notes ?? "",
+    });
+  }
+
+  function save(it: EquipmentItem) {
+    const name = draft.name.trim();
+    const qty = parseInt(draft.quantity, 10);
+    if (!name) {
+      toast({ title: "Item name is required", variant: "destructive" });
+      return;
+    }
+    if (!Number.isFinite(qty) || qty < 0) {
+      toast({ title: "Quantity must be a whole number ≥ 0", variant: "destructive" });
+      return;
+    }
+    update.mutate(
+      {
+        itemId: it.id,
+        data: {
+          name,
+          quantity: qty,
+          unit: draft.unit.trim() || null,
+          notes: draft.notes.trim() || null,
+        },
+      },
+      {
+        onSuccess: () => {
+          invalidate();
+          setEditingId(null);
+          toast({ title: "Item updated" });
+        },
+        onError: () => toast({ title: "Could not update item", variant: "destructive" }),
+      },
+    );
+  }
+
+  function del(it: EquipmentItem) {
+    remove.mutate(it.id, {
+      onSuccess: (result) => {
+        invalidate();
+        queryClient.invalidateQueries({ queryKey: DELETE_REQUESTS_PENDING_COUNT_KEY });
+        toast(deleteOutcomeToast(result, `${it.name} removed`));
+      },
+      onError: () => toast({ title: "Could not remove item", variant: "destructive" }),
+    });
+  }
+
+  return (
+    <Card className="border-border/60" data-testid="equipment-items-card">
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2 text-base">
+          <Package className="h-4 w-4" /> Attached items & consumables
+          <span className="font-mono text-xs font-normal text-muted-foreground">({items.length})</span>
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        {isLoading ? (
+          <Skeleton className="h-10 w-full" />
+        ) : items.length === 0 ? (
+          <p className="text-sm text-muted-foreground">
+            Nothing attached yet — track chains, bars, blades, spare parts and other
+            accessories that travel with this equipment.
+          </p>
+        ) : (
+          <ul className="divide-y rounded-md border">
+            {items.map((it) => {
+              const editing = editingId === it.id;
+              return (
+                <li key={it.id} className="flex flex-wrap items-center gap-2 px-3 py-2" data-testid={`equipment-item-${it.id}`}>
+                  {editing ? (
+                    <>
+                      <Input
+                        className="h-8 min-w-[8rem] flex-1 text-sm"
+                        value={draft.name}
+                        onChange={(e) => setDraft((d) => ({ ...d, name: e.target.value }))}
+                        autoFocus
+                      />
+                      <Input
+                        type="number"
+                        min="0"
+                        step="1"
+                        className="h-8 w-20 font-mono text-sm"
+                        value={draft.quantity}
+                        onChange={(e) => setDraft((d) => ({ ...d, quantity: e.target.value }))}
+                      />
+                      <Input
+                        className="h-8 w-20 text-sm"
+                        placeholder="unit"
+                        value={draft.unit}
+                        onChange={(e) => setDraft((d) => ({ ...d, unit: e.target.value }))}
+                      />
+                      <Input
+                        className="h-8 min-w-[8rem] flex-1 text-sm"
+                        placeholder="Notes"
+                        value={draft.notes}
+                        onChange={(e) => setDraft((d) => ({ ...d, notes: e.target.value }))}
+                      />
+                      <Button size="sm" className="h-8" onClick={() => save(it)} disabled={update.isPending}>
+                        <Check className="mr-1 h-3.5 w-3.5" /> Save
+                      </Button>
+                      <Button size="sm" variant="ghost" className="h-8" onClick={() => setEditingId(null)} disabled={update.isPending}>
+                        Cancel
+                      </Button>
+                    </>
+                  ) : (
+                    <>
+                      <span className="text-sm font-medium">{it.name}</span>
+                      <span className="font-mono text-xs text-muted-foreground">
+                        × {num(it.quantity)}{it.unit ? ` ${it.unit}` : ""}
+                      </span>
+                      {it.notes && (
+                        <span className="truncate text-xs text-muted-foreground/80">— {it.notes}</span>
+                      )}
+                      {canEdit && (
+                        <span className="ml-auto flex items-center gap-0.5">
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-7 w-7"
+                            title="Edit item"
+                            aria-label={`Edit ${it.name}`}
+                            onClick={() => startEdit(it)}
+                          >
+                            <Pencil className="h-3.5 w-3.5" />
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-7 w-7 text-destructive hover:bg-destructive/10 hover:text-destructive"
+                            title="Remove item"
+                            aria-label={`Remove ${it.name}`}
+                            onClick={() => del(it)}
+                            disabled={remove.isPending}
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </Button>
+                        </span>
+                      )}
+                    </>
+                  )}
+                </li>
+              );
+            })}
+          </ul>
+        )}
+        {canEdit && (
+          <form onSubmit={add} className="flex flex-wrap items-end gap-2 border-t pt-3">
+            <div className="min-w-[10rem] flex-1">
+              <Label htmlFor={`eq-item-name-${equipmentId}`} className="text-xs">Add item</Label>
+              <Input
+                id={`eq-item-name-${equipmentId}`}
+                className="mt-1 h-8 text-sm"
+                placeholder="e.g. 20in saw chain"
+                value={newName}
+                onChange={(e) => setNewName(e.target.value)}
+              />
+            </div>
+            <div className="w-20">
+              <Label htmlFor={`eq-item-qty-${equipmentId}`} className="text-xs">Qty</Label>
+              <Input
+                id={`eq-item-qty-${equipmentId}`}
+                type="number"
+                min="1"
+                step="1"
+                className="mt-1 h-8 font-mono text-sm"
+                value={newQty}
+                onChange={(e) => setNewQty(e.target.value)}
+              />
+            </div>
+            <div className="w-24">
+              <Label htmlFor={`eq-item-unit-${equipmentId}`} className="text-xs">Unit</Label>
+              <Input
+                id={`eq-item-unit-${equipmentId}`}
+                className="mt-1 h-8 text-sm"
+                placeholder="pcs"
+                value={newUnit}
+                onChange={(e) => setNewUnit(e.target.value)}
+              />
+            </div>
+            <Button type="submit" size="sm" className="h-8" disabled={create.isPending} data-testid="equipment-item-add">
+              {create.isPending ? "Adding…" : "Add"}
+            </Button>
+          </form>
+        )}
       </CardContent>
     </Card>
   );

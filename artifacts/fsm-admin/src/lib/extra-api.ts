@@ -44,6 +44,15 @@ export type AssetExt = {
   // Purchase price in cents — surfaced here so the UI can display and
   // edit it even though the orval-generated Asset type may not include it.
   purchasePriceCents: number | null;
+  // Identifier (VIN for trucks, serial for equipment) + spec fields
+  // the Edit Asset dialog pre-fills from. All already present in the
+  // /assets payload.
+  identifier: string | null;
+  plate: string | null;
+  equipmentType: string | null;
+  purchaseDate: string | null;
+  serviceIntervalUsage: number;
+  currentUsage: number;
   // Insurance schedule fields (trucks/trailers only; null for equipment)
   year: number | null;
   statedValueCents: number | null;
@@ -238,6 +247,24 @@ export function useDeleteEquipmentItem(equipmentId: number) {
   });
 }
 
+export type UpdateEquipmentItemBody = {
+  name?: string;
+  quantity?: number;
+  unit?: string | null;
+  notes?: string | null;
+};
+
+export function useUpdateEquipmentItem(equipmentId: number) {
+  return useMutation({
+    mutationFn: ({ itemId, data }: { itemId: number; data: UpdateEquipmentItemBody }) =>
+      customFetch<{ item: EquipmentItem }>(`/api/equipment/${equipmentId}/items/${itemId}`, {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(data),
+      }),
+  });
+}
+
 // ---------- Assignment ----------
 export type AssignAssetBody = { crewId: number | null; note?: string };
 
@@ -334,16 +361,112 @@ export function useCreateEquipment() {
   });
 }
 
-// ---------- Update Equipment Extension Fields ----------
-// Handles fields not yet in the OpenAPI spec (location, etc.) by sending
-// them via the server's equipmentExtensionSchema path.
+// ---------- Update Truck / Equipment (full field set) ----------
+// The orval-generated useUpdateTruck / useUpdateEquipment hooks only know
+// the fields in openapi.yaml. These hand-rolled variants send the full
+// column set the server's PATCH handlers accept (vehicleType, category,
+// quantity, location, insurance-schedule fields, …). Every key is
+// optional: PATCH semantics on the server mean omitted keys are left
+// untouched and `null` explicitly clears a nullable column.
+export type UpdateTruckExtBody = {
+  name?: string;
+  vehicleType?: "TRUCK" | "TRAILER";
+  brand?: string | null;
+  model?: string | null;
+  vin?: string | null;
+  plate?: string | null;
+  status?: "ACTIVE" | "IN_SHOP" | "RETIRED";
+  assignedCrewId?: number | null;
+  departmentId?: number | null;
+  purchasePriceCents?: number | null;
+  purchaseDate?: string | null;
+  currentMileage?: number;
+  serviceIntervalMiles?: number;
+  year?: number | null;
+  statedValueCents?: number | null;
+  gvwGcwLbs?: number | null;
+  garagingState?: string | null;
+  operatingRadiusMiles?: number | null;
+  insuranceVehNumber?: number | null;
+  bodyTypeCode?: string | null;
+};
+
+export function useUpdateTruckExt() {
+  return useMutation({
+    mutationFn: ({ id, data }: { id: number; data: UpdateTruckExtBody }) =>
+      customFetch<{ truck: unknown }>(`/api/trucks/${id}`, {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(data),
+      }),
+  });
+}
+
+export type UpdateEquipmentExtBody = {
+  name?: string;
+  type?: string;
+  category?: "HANDHELD" | "CUSTOM";
+  customCategoryLabel?: string | null;
+  quantity?: number;
+  brand?: string | null;
+  model?: string | null;
+  serial?: string | null;
+  location?: string | null;
+  status?: "ACTIVE" | "IN_SHOP" | "RETIRED";
+  assignedTruckId?: number | null;
+  departmentId?: number | null;
+  purchasePriceCents?: number | null;
+  purchaseDate?: string | null;
+  currentHours?: number;
+  serviceIntervalHours?: number;
+};
+
 export function useUpdateEquipmentExt() {
   return useMutation({
-    mutationFn: ({ id, data }: { id: number; data: { location?: string | null; purchasePriceCents?: number | null } }) =>
+    mutationFn: ({ id, data }: { id: number; data: UpdateEquipmentExtBody }) =>
       customFetch<{ equipment: unknown }>(`/api/equipment/${id}`, {
         method: "PATCH",
         headers: { "content-type": "application/json" },
         body: JSON.stringify(data),
+      }),
+  });
+}
+
+// ---------- Usage reading corrections ----------
+export type UsageReading = {
+  id: number;
+  truckId: number | null;
+  equipmentId: number | null;
+  mileage: number | null;
+  hours: number | null;
+  recordedAt: string;
+  recordedByUserId: number | null;
+  notes: string | null;
+};
+
+export type UpdateUsageReadingBody = {
+  mileage?: number;
+  hours?: number;
+  recordedAt?: string;
+  notes?: string | null;
+};
+
+export function useUpdateUsageReading() {
+  return useMutation({
+    mutationFn: ({ id, data }: { id: number; data: UpdateUsageReadingBody }) =>
+      customFetch<{ reading: UsageReading }>(`/api/usage-readings/${id}`, {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(data),
+      }),
+  });
+}
+
+export function useDeleteUsageReading() {
+  return useMutation({
+    mutationFn: (id: number) =>
+      customFetch<{ ok: boolean }>(`/api/usage-readings/${id}`, {
+        method: "DELETE",
       }),
   });
 }
@@ -399,6 +522,15 @@ export function useUpdateCrew(crewId: number) {
         method: "PATCH",
         headers: { "content-type": "application/json" },
         body: JSON.stringify(body),
+      }),
+  });
+}
+
+export function useDeleteCrew() {
+  return useMutation({
+    mutationFn: (crewId: number) =>
+      customFetch<{ ok: boolean }>(`/api/crews/${crewId}`, {
+        method: "DELETE",
       }),
   });
 }

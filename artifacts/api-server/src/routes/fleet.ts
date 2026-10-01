@@ -38,6 +38,7 @@ import {
 import { requireAuth } from "../middlewares/requireAuth";
 import { requireSection, hasSectionAccess } from "../middlewares/requireSection";
 import { requestDelete, sendDeleteOutcome } from "../lib/deleteGuard";
+import { recomputeAssetUsage } from "../lib/assetUsage";
 
 const router: IRouter = Router();
 
@@ -51,14 +52,45 @@ type MaintenanceKind = "SCHEDULED" | "REPAIR" | "INSPECTION";
 const truckExtensionSchema = z
   .object({
     vehicleType: z.enum(["TRUCK", "TRAILER"]).optional(),
-    year: z.number().int().min(1900).max(2100).nullish(),
-    insuranceVehNumber: z.number().int().nullish(),
-    statedValueCents: z.number().int().min(0).nullish(),
-    gvwGcwLbs: z.number().int().min(0).nullish(),
-    garagingState: z.string().max(2).nullish(),
-    bodyTypeCode: z.string().max(10).nullish(),
+    // Insurance-schedule / spec columns. All nullable so the edit form can
+    // clear a value by sending null; omitted keys are left untouched.
+    year: z.number().int().min(1900).max(2100).nullable().optional(),
+    statedValueCents: z.number().int().min(0).nullable().optional(),
+    gvwGcwLbs: z.number().int().min(0).nullable().optional(),
+    garagingState: z.string().trim().max(2).nullable().optional(),
+    operatingRadiusMiles: z.number().int().min(0).nullable().optional(),
+    insuranceVehNumber: z.number().int().min(0).nullable().optional(),
+    bodyTypeCode: z.string().trim().max(20).nullable().optional(),
   })
   .passthrough();
+
+// Column names shared by the POST + PATCH truck handlers for the
+// extension fields above (everything except vehicleType, which has its
+// own default logic on create).
+const TRUCK_EXT_FIELDS = [
+  "year",
+  "statedValueCents",
+  "gvwGcwLbs",
+  "garagingState",
+  "operatingRadiusMiles",
+  "insuranceVehNumber",
+  "bodyTypeCode",
+] as const;
+
+function pickTruckExtFields(
+  ext: z.infer<typeof truckExtensionSchema>,
+): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const key of TRUCK_EXT_FIELDS) {
+    if (ext[key] !== undefined) {
+      // Empty strings become null so "clear this field" from a text
+      // input doesn't persist "" into the row.
+      const v = ext[key];
+      out[key] = typeof v === "string" && v.length === 0 ? null : v;
+    }
+  }
+  return out;
+}
 
 const equipmentExtensionSchema = z
   .object({
@@ -128,9 +160,11 @@ router.post(
     const truckExt = truckExtensionSchema.safeParse(req.body);
     const vehicleType =
       truckExt.success && truckExt.data.vehicleType ? truckExt.data.vehicleType : "TRUCK";
+    const truckExtValues = truckExt.success ? pickTruckExtFields(truckExt.data) : {};
     const [row] = await db
       .insert(trucksTable)
       .values({
+        ...(truckExtValues as Partial<typeof trucksTable.$inferInsert>),
         name: d.name,
         vehicleType,
         brand: d.brand ?? null,
@@ -208,14 +242,14 @@ router.patch(
 
     const truckExt = truckExtensionSchema.safeParse(req.body);
     if (truckExt.success) {
-      const ext = truckExt.data;
-      if (ext.vehicleType !== undefined) patch.vehicleType = ext.vehicleType;
-      if (ext.year !== undefined) patch.year = ext.year ?? null;
-      if (ext.insuranceVehNumber !== undefined) patch.insuranceVehNumber = ext.insuranceVehNumber ?? null;
-      if (ext.statedValueCents !== undefined) patch.statedValueCents = ext.statedValueCents ?? null;
-      if (ext.gvwGcwLbs !== undefined) patch.gvwGcwLbs = ext.gvwGcwLbs ?? null;
-      if (ext.garagingState !== undefined) patch.garagingState = ext.garagingState ?? null;
-      if (ext.bodyTypeCode !== undefined) patch.bodyTypeCode = ext.bodyTypeCode ?? null;
+      if (truckExt.data.vehicleType !== undefined) {
+        patch.vehicleType = truckExt.data.vehicleType;
+      }
+      Object.assign(patch, pickTruckExtFields(truckExt.data));
+    }
+    if (Object.keys(patch).length === 0) {
+      res.status(400).json({ error: "no_fields_to_update" });
+      return;
     }
 
     const [row] = await db
@@ -416,6 +450,38 @@ router.patch(
         patch.location = equipExt.data.location ?? null;
       }
     }
+    if (Object.keys(patch).length === 0) {
+      res.status(400).json({ error: "no_fields_to_update" });
+      return;
+    }
+    // A CUSTOM row must always carry a category label. Validate against
+    // the merged (existing + patch) state so switching category and
+    // clearing the label in one request can't leave the row inconsistent.
+    if (patch.category !== undefined || patch.customCategoryLabel !== undefined) {
+      const [current] = await db
+        .select({
+          category: equipmentTable.category,
+          customCategoryLabel: equipmentTable.customCategoryLabel,
+        })
+        .from(equipmentTable)
+        .where(eq(equipmentTable.id, params.data.id));
+      if (!current) {
+        res.status(404).json({ error: "not_found" });
+        return;
+      }
+      const nextCategory = (patch.category as string | undefined) ?? current.category;
+      const nextLabel =
+        patch.customCategoryLabel !== undefined
+          ? (patch.customCategoryLabel as string | null)
+          : current.customCategoryLabel;
+      if (nextCategory === "CUSTOM" && !nextLabel) {
+        res
+          .status(400)
+          .json({ error: "custom_category_label_required", detail: "CUSTOM items require a category label" });
+        return;
+      }
+      if (nextCategory === "HANDHELD") patch.customCategoryLabel = null;
+    }
 
     const [row] = await db
       .update(equipmentTable)
@@ -566,6 +632,61 @@ router.delete(
       },
     });
     sendDeleteOutcome(res, outcome);
+  },
+);
+
+// PATCH /equipment/:equipId/items/:itemId — edit a consumable row in
+// place. Same partial-update semantics as the asset PATCH handlers: only
+// keys present in the body are written, so the UI can rename without
+// resending quantity and vice-versa.
+const updateEquipmentItemSchema = z
+  .object({
+    name: z.string().trim().min(1).max(200).optional(),
+    quantity: z.number().int().min(0).optional(),
+    unit: z.string().trim().max(40).nullable().optional(),
+    notes: z.string().trim().max(500).nullable().optional(),
+  })
+  .strict();
+
+router.patch(
+  "/equipment/:equipId/items/:itemId",
+  requireAuth,
+  requireSection("fleet.equipment", "edit"),
+  async (req, res) => {
+    const equipId = Number(req.params.equipId);
+    const itemId = Number(req.params.itemId);
+    if (!Number.isFinite(equipId) || !Number.isFinite(itemId)) {
+      res.status(400).json({ error: "invalid_id" });
+      return;
+    }
+    const parsed = updateEquipmentItemSchema.safeParse(req.body);
+    if (!parsed.success || Object.keys(parsed.data).length === 0) {
+      res.status(400).json({ error: "invalid_body" });
+      return;
+    }
+    if (!(await assertAssetInScope(req, res, { equipmentId: equipId }))) return;
+    const patch: Partial<typeof equipmentItemsTable.$inferInsert> = {
+      updatedAt: new Date(),
+    };
+    if (parsed.data.name !== undefined) patch.name = parsed.data.name;
+    if (parsed.data.quantity !== undefined) patch.quantity = parsed.data.quantity;
+    if (parsed.data.unit !== undefined) patch.unit = parsed.data.unit || null;
+    if (parsed.data.notes !== undefined) patch.notes = parsed.data.notes || null;
+    const [item] = await db
+      .update(equipmentItemsTable)
+      .set(patch)
+      .where(
+        and(
+          eq(equipmentItemsTable.id, itemId),
+          eq(equipmentItemsTable.equipmentId, equipId),
+        ),
+      )
+      .returning();
+    if (!item) {
+      res.status(404).json({ error: "not_found" });
+      return;
+    }
+    res.json({ item });
   },
 );
 
@@ -959,6 +1080,10 @@ type AssetSummary = {
   brand: string | null;
   model: string | null;
   identifier: string | null;
+  // Raw columns the Edit Asset dialog pre-fills from. `plate` is trucks
+  // only, `equipmentType` is equipment only — the other side is null.
+  plate: string | null;
+  equipmentType: string | null;
   status: string;
   departmentId: number | null;
   departmentName: string | null;
@@ -1193,6 +1318,8 @@ async function buildAssetList(departmentId?: number): Promise<AssetSummary[]> {
       brand: t.brand,
       model: t.model,
       identifier: t.vin,
+      plate: t.plate,
+      equipmentType: null,
       status: t.status,
       departmentId: t.departmentId ?? null,
       departmentName: t.departmentId != null ? (deptMap.get(t.departmentId) ?? null) : null,
@@ -1292,6 +1419,8 @@ async function buildAssetList(departmentId?: number): Promise<AssetSummary[]> {
       brand: e.brand,
       model: e.model,
       identifier: e.serial,
+      plate: null,
+      equipmentType: e.type,
       status: e.status,
       departmentId: e.departmentId ?? null,
       departmentName: e.departmentId != null ? (deptMap.get(e.departmentId) ?? null) : null,
@@ -2078,6 +2207,54 @@ router.patch(
   },
 );
 
+// DELETE /crews/:id — remove a crew. Every FK that points at crews is
+// either cascade (crew_members) or set-null (trucks, equipment, jobs,
+// assignment log), so deleting one unassigns rather than orphans. Goes
+// through the delete guard like every other destructive admin action.
+router.delete(
+  "/crews/:id",
+  requireAuth,
+  (req, res, next) => {
+    if (!req.user) { res.status(401).json({ error: "unauthenticated" }); return; }
+    const canFleet = hasSectionAccess(req.user, "fleet.trucks", "edit");
+    const canAdmin = hasSectionAccess(req.user, "admin.users", "edit");
+    if (!canFleet && !canAdmin) {
+      res.status(403).json({ error: "forbidden", section: "fleet.trucks|admin.users", action: "edit" });
+      return;
+    }
+    next();
+  },
+  async (req, res) => {
+    const crewId = Number(req.params.id);
+    if (!Number.isFinite(crewId)) {
+      res.status(400).json({ error: "invalid_id" });
+      return;
+    }
+    const [existing] = await db
+      .select({ name: crewsTable.name })
+      .from(crewsTable)
+      .where(eq(crewsTable.id, crewId));
+    if (!existing) {
+      res.status(404).json({ error: "not_found" });
+      return;
+    }
+    const outcome = await requestDelete({
+      req,
+      kind: "crew",
+      id: crewId,
+      label: `Crew: ${existing.name}`,
+      execute: async () => {
+        const deleted = await db
+          .delete(crewsTable)
+          .where(eq(crewsTable.id, crewId))
+          .returning({ id: crewsTable.id });
+        return deleted.length > 0;
+      },
+    });
+    sendDeleteOutcome(res, outcome);
+  },
+);
+
 // GET /crews/lead-candidates — returns a minimal user list (id + fullName) that
 // can be assigned as crew leads. Gated by fleet.trucks view so MECHANIC users
 // can populate the crew-creation form without needing admin.users view.
@@ -2510,6 +2687,157 @@ router.post(
     }
 
     res.status(201).json({ reading: row });
+  },
+);
+
+// ---------- Usage reading corrections ----------
+// Readings are append-only in the normal flow, but a fat-fingered
+// odometer entry (e.g. 1,250,000 instead of 125,000) poisons the cached
+// `currentMileage` / `currentHours` on the asset and every service-due
+// calculation downstream. These two handlers let a fleet editor fix or
+// remove a reading and then re-derive the cached usage from what's left.
+
+const updateUsageReadingSchema = z
+  .object({
+    mileage: z.number().int().min(0).nullable().optional(),
+    hours: z.number().int().min(0).nullable().optional(),
+    recordedAt: z.coerce.date().optional(),
+    notes: z.string().trim().max(500).nullable().optional(),
+  })
+  .strict();
+
+async function assertUsageReadingInScope(
+  req: import("express").Request,
+  res: import("express").Response,
+  readingId: number,
+): Promise<{ id: number; truckId: number | null; equipmentId: number | null; mileage: number | null; hours: number | null } | null> {
+  const [reading] = await db
+    .select({
+      id: usageReadingsTable.id,
+      truckId: usageReadingsTable.truckId,
+      equipmentId: usageReadingsTable.equipmentId,
+      mileage: usageReadingsTable.mileage,
+      hours: usageReadingsTable.hours,
+    })
+    .from(usageReadingsTable)
+    .where(eq(usageReadingsTable.id, readingId));
+  if (!reading) {
+    res.status(404).json({ error: "not_found" });
+    return null;
+  }
+  if (!(await assertAssetInScope(req, res, { truckId: reading.truckId, equipmentId: reading.equipmentId }))) {
+    return null;
+  }
+  return reading;
+}
+
+router.patch(
+  "/usage-readings/:id",
+  requireAuth,
+  requireSection("fleet.maintenance", "edit"),
+  async (req, res) => {
+    const id = Number(req.params.id);
+    if (!Number.isFinite(id)) {
+      res.status(400).json({ error: "invalid_id" });
+      return;
+    }
+    const parsed = updateUsageReadingSchema.safeParse(req.body);
+    if (!parsed.success || Object.keys(parsed.data).length === 0) {
+      res.status(400).json({ error: "invalid_body" });
+      return;
+    }
+    const reading = await assertUsageReadingInScope(req, res, id);
+    if (!reading) return;
+    const isTruck = reading.truckId != null;
+    // Keep the value on the side that matches the asset kind — a truck
+    // reading carries mileage, equipment carries hours.
+    if (isTruck && parsed.data.mileage === null) {
+      res.status(400).json({ error: "trucks_require_mileage" });
+      return;
+    }
+    if (!isTruck && parsed.data.hours === null) {
+      res.status(400).json({ error: "equipment_requires_hours" });
+      return;
+    }
+    const patch: Partial<typeof usageReadingsTable.$inferInsert> = {};
+    if (isTruck && parsed.data.mileage !== undefined) patch.mileage = parsed.data.mileage;
+    if (!isTruck && parsed.data.hours !== undefined) patch.hours = parsed.data.hours;
+    if (parsed.data.recordedAt !== undefined) patch.recordedAt = parsed.data.recordedAt;
+    if (parsed.data.notes !== undefined) patch.notes = parsed.data.notes || null;
+    if (Object.keys(patch).length === 0) {
+      res.status(400).json({ error: "no_fields_to_update" });
+      return;
+    }
+    const [row] = await db
+      .update(usageReadingsTable)
+      .set(patch)
+      .where(eq(usageReadingsTable.id, id))
+      .returning();
+    if (!row) {
+      res.status(404).json({ error: "not_found" });
+      return;
+    }
+    const previousValue = isTruck ? reading.mileage : reading.hours;
+    const newValue = isTruck ? row.mileage : row.hours;
+    if (newValue != null && previousValue !== newValue) {
+      // Advance the cache if the corrected value is now the high-water
+      // mark; otherwise re-derive from what's left.
+      if (isTruck && reading.truckId != null) {
+        await db
+          .update(trucksTable)
+          .set({ currentMileage: newValue })
+          .where(and(eq(trucksTable.id, reading.truckId), sql`${trucksTable.currentMileage} < ${newValue}`));
+      } else if (!isTruck && reading.equipmentId != null) {
+        await db
+          .update(equipmentTable)
+          .set({ currentHours: newValue })
+          .where(and(eq(equipmentTable.id, reading.equipmentId), sql`${equipmentTable.currentHours} < ${newValue}`));
+      }
+      await recomputeAssetUsage({
+        truckId: reading.truckId,
+        equipmentId: reading.equipmentId,
+        previousValue,
+      });
+    }
+    res.json({ reading: row });
+  },
+);
+
+router.delete(
+  "/usage-readings/:id",
+  requireAuth,
+  requireSection("fleet.maintenance", "edit"),
+  async (req, res) => {
+    const id = Number(req.params.id);
+    if (!Number.isFinite(id)) {
+      res.status(400).json({ error: "invalid_id" });
+      return;
+    }
+    const reading = await assertUsageReadingInScope(req, res, id);
+    if (!reading) return;
+    const value = reading.truckId != null ? reading.mileage : reading.hours;
+    const unit = reading.truckId != null ? "mi" : "hrs";
+    const outcome = await requestDelete({
+      req,
+      kind: "usage_reading",
+      id,
+      label: `Usage reading: ${value ?? "?"} ${unit}`,
+      execute: async () => {
+        const deleted = await db
+          .delete(usageReadingsTable)
+          .where(eq(usageReadingsTable.id, id))
+          .returning({ id: usageReadingsTable.id });
+        if (deleted.length > 0) {
+          await recomputeAssetUsage({
+            truckId: reading.truckId,
+            equipmentId: reading.equipmentId,
+            previousValue: value,
+          });
+        }
+        return deleted.length > 0;
+      },
+    });
+    sendDeleteOutcome(res, outcome);
   },
 );
 

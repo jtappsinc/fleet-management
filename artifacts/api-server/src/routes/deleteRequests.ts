@@ -12,9 +12,12 @@ import {
   equipmentTable,
   equipmentItemsTable,
   maintenanceLogsTable,
+  usageReadingsTable,
+  crewsTable,
 } from "@workspace/db";
 import { requireAuth } from "../middlewares/requireAuth";
 import { logger } from "../lib/logger";
+import { recomputeAssetUsage } from "../lib/assetUsage";
 
 const router: IRouter = Router();
 
@@ -202,6 +205,41 @@ async function executeApprovedDelete(
             .delete(maintenanceLogsTable)
             .where(eq(maintenanceLogsTable.id, id))
             .returning({ id: maintenanceLogsTable.id })
+        ).length > 0
+      );
+    case "usage_reading": {
+      // Capture the reading before deleting so the asset's cached
+      // odometer / hour-meter can be re-derived (see lib/assetUsage).
+      const [reading] = await db
+        .select({
+          truckId: usageReadingsTable.truckId,
+          equipmentId: usageReadingsTable.equipmentId,
+          mileage: usageReadingsTable.mileage,
+          hours: usageReadingsTable.hours,
+        })
+        .from(usageReadingsTable)
+        .where(eq(usageReadingsTable.id, id));
+      if (!reading) return false;
+      const deleted = await db
+        .delete(usageReadingsTable)
+        .where(eq(usageReadingsTable.id, id))
+        .returning({ id: usageReadingsTable.id });
+      if (deleted.length > 0) {
+        await recomputeAssetUsage({
+          truckId: reading.truckId,
+          equipmentId: reading.equipmentId,
+          previousValue: reading.truckId != null ? reading.mileage : reading.hours,
+        });
+      }
+      return deleted.length > 0;
+    }
+    case "crew":
+      return (
+        (
+          await db
+            .delete(crewsTable)
+            .where(eq(crewsTable.id, id))
+            .returning({ id: crewsTable.id })
         ).length > 0
       );
     default:
