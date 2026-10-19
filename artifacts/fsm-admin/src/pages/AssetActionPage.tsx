@@ -266,6 +266,14 @@ export function AssetActionPage() {
                     "Make / model not set"}
                 </div>
                 <div className="mt-0.5 flex flex-wrap items-center gap-2">
+                  {asset.kind === "TRUCK" && asset.fleetTag && (
+                    <Badge
+                      className="border-primary/30 bg-primary/10 font-mono text-[11px] font-semibold text-primary hover:bg-primary/10"
+                      data-testid="asset-fleet-tag-badge"
+                    >
+                      {asset.fleetTag}
+                    </Badge>
+                  )}
                   <Badge variant="secondary" className="text-[11px]">
                     {categoryDisplayLabel}
                   </Badge>
@@ -1603,6 +1611,17 @@ const BODY_TYPE_LABELS: Record<string, string> = {
   T: "Flatbed Trailer",
 };
 
+// "2026-12" → "Dec 2026". Returns null for empty/invalid so the strip
+// shows its standard "—" placeholder.
+function formatPlateExpires(ym: string | null): string | null {
+  if (!ym) return null;
+  const m = /^(\d{4})-(\d{2})$/.exec(ym);
+  if (!m) return ym;
+  const d = new Date(Number(m[1]), Number(m[2]) - 1, 1);
+  if (Number.isNaN(d.getTime())) return ym;
+  return d.toLocaleString("en-US", { month: "short", year: "numeric" });
+}
+
 function InsuranceInfoStrip({
   asset,
 }: {
@@ -1616,6 +1635,9 @@ function InsuranceInfoStrip({
     gvwGcwLbs: number | null;
     garagingState: string | null;
     operatingRadiusMiles: number | null;
+    fleetTag: string | null;
+    plate: string | null;
+    plateExpires: string | null;
   };
 }) {
   const [editingField, setEditingField] = useState<string | null>(null);
@@ -1657,6 +1679,16 @@ function InsuranceInfoStrip({
     } else if (field === "operatingRadiusMiles") {
       const n = parseInt(trimmed.replace(/,/g, ""));
       data = { operatingRadiusMiles: trimmed === "" ? null : Number.isFinite(n) ? n : null };
+    } else if (field === "fleetTag") {
+      data = { fleetTag: trimmed === "" ? null : trimmed.toUpperCase() };
+    } else if (field === "plate") {
+      data = { plate: trimmed === "" ? null : trimmed.toUpperCase() };
+    } else if (field === "plateExpires") {
+      if (trimmed !== "" && !/^\d{4}-(0[1-9]|1[0-2])$/.test(trimmed)) {
+        toast({ title: "Plate expiration must be a month (YYYY-MM)", variant: "destructive" });
+        return;
+      }
+      data = { plateExpires: trimmed === "" ? null : trimmed };
     }
     updateTruck.mutate(
       { id: asset.id, data: data as Parameters<typeof updateTruck.mutate>[0]["data"] },
@@ -1683,6 +1715,29 @@ function InsuranceInfoStrip({
   };
 
   const fields: FieldDef[] = [
+    {
+      key: "fleetTag",
+      label: "Fleet tag",
+      displayValue: asset.fleetTag,
+      draftValue: asset.fleetTag ?? "",
+      inputType: "text",
+      placeholder: "JT-01",
+    },
+    {
+      key: "plate",
+      label: "Plate",
+      displayValue: asset.plate,
+      draftValue: asset.plate ?? "",
+      inputType: "text",
+      placeholder: "ABC-1234",
+    },
+    {
+      key: "plateExpires",
+      label: "Plate expires",
+      displayValue: formatPlateExpires(asset.plateExpires),
+      draftValue: asset.plateExpires ?? "",
+      inputType: "month",
+    },
     {
       key: "year",
       label: "Year",
@@ -1745,7 +1800,7 @@ function InsuranceInfoStrip({
   return (
     <div className="rounded-md border border-dashed bg-muted/30 p-2.5">
       <div className="mb-1.5 text-[10px] font-mono uppercase tracking-wider text-muted-foreground">
-        Insurance Schedule
+        Registration &amp; Insurance
       </div>
       <div className="flex flex-wrap gap-x-4 gap-y-1.5">
         {fields.map((f) =>

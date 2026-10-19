@@ -240,6 +240,8 @@ export interface TruckPatchBody {
   garagingState?: string | null;
   bodyTypeCode?: string | null;
   operatingRadiusMiles?: number | null;
+  fleetTag?: string | null;
+  plateExpires?: string | null;
 }
 
 export interface TruckResponse {

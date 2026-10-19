@@ -6,4 +6,5 @@ export { backfillDemoData } from "./backfillDemoData";
 export { backfillDepartments } from "./backfillDepartments";
 export { isDemoMode } from "./demoMode";
 export { importRealCrews } from "./importRealCrews";
+export { applyFleetTags, FLEET_TAGS, type FleetTagRow } from "./fleetTags";
 export { cleanupDemoUsers } from "./cleanupDemoUsers";

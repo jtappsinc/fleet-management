@@ -71,6 +71,8 @@ export type EditableAsset = {
   operatingRadiusMiles?: number | null;
   insuranceVehNumber?: number | null;
   bodyTypeCode?: string | null;
+  fleetTag?: string | null;
+  plateExpires?: string | null;
 };
 
 type FormState = {
@@ -99,6 +101,8 @@ type FormState = {
   operatingRadiusMiles: string;
   insuranceVehNumber: string;
   bodyTypeCode: string;
+  fleetTag: string;
+  plateExpires: string; // "YYYY-MM"
 };
 
 const toDollars = (cents: number | null | undefined) =>
@@ -134,6 +138,8 @@ function buildInitial(a: EditableAsset): FormState {
     operatingRadiusMiles: toStr(a.operatingRadiusMiles),
     insuranceVehNumber: toStr(a.insuranceVehNumber),
     bodyTypeCode: a.bodyTypeCode ?? "",
+    fleetTag: a.fleetTag ?? "",
+    plateExpires: a.plateExpires ?? "",
   };
 }
 
@@ -252,6 +258,8 @@ export function EditAssetDialog({
     if (insuranceVehNumber === undefined) { setError("Insurance vehicle # must be a whole number ≥ 0."); return; }
     const garagingState = form.garagingState.trim().toUpperCase();
     if (garagingState && !/^[A-Z]{2}$/.test(garagingState)) { setError("Garaging state must be a 2-letter code (e.g. FL)."); return; }
+    const plateExpires = form.plateExpires.trim();
+    if (plateExpires && !/^\d{4}-(0[1-9]|1[0-2])$/.test(plateExpires)) { setError("Plate expiration must be a month (YYYY-MM)."); return; }
 
     // Diff against the initial snapshot so we only PATCH what changed —
     // keeps the audit trail honest and avoids clobbering a column another
@@ -282,6 +290,8 @@ export function EditAssetDialog({
       if (changed("operatingRadiusMiles")) truckPatch.operatingRadiusMiles = operatingRadiusMiles;
       if (changed("insuranceVehNumber")) truckPatch.insuranceVehNumber = insuranceVehNumber;
       if (changed("bodyTypeCode")) truckPatch.bodyTypeCode = textOrNull(form.bodyTypeCode);
+      if (changed("fleetTag")) truckPatch.fleetTag = textOrNull(form.fleetTag.toUpperCase());
+      if (changed("plateExpires")) truckPatch.plateExpires = plateExpires || null;
     } else {
       if (changed("equipmentType")) equipPatch.type = form.equipmentType.trim();
       if (changed("category")) equipPatch.category = form.category;
@@ -463,10 +473,20 @@ export function EditAssetDialog({
                 <Input id="ea-ident" value={form.identifier} onChange={(e) => field("identifier", e.target.value)} placeholder={isTruck ? "1FDXX000…" : "SN-123456"} className="mt-1 font-mono" />
               </div>
               {isTruck ? (
-                <div>
-                  <Label htmlFor="ea-plate">License plate</Label>
-                  <Input id="ea-plate" value={form.plate} onChange={(e) => field("plate", e.target.value)} placeholder="ABC-1234" className="mt-1 font-mono" />
-                </div>
+                <>
+                  <div>
+                    <Label htmlFor="ea-plate">License plate</Label>
+                    <Input id="ea-plate" value={form.plate} onChange={(e) => field("plate", e.target.value)} placeholder="ABC-1234" className="mt-1 font-mono" />
+                  </div>
+                  <div>
+                    <Label htmlFor="ea-fleet-tag">Fleet tag</Label>
+                    <Input id="ea-fleet-tag" value={form.fleetTag} onChange={(e) => field("fleetTag", e.target.value)} placeholder="JT-01" className="mt-1 font-mono uppercase" />
+                  </div>
+                  <div>
+                    <Label htmlFor="ea-plate-exp">Plate expires</Label>
+                    <Input id="ea-plate-exp" type="month" value={form.plateExpires} onChange={(e) => field("plateExpires", e.target.value)} className="mt-1 font-mono" />
+                  </div>
+                </>
               ) : (
                 <div>
                   <Label htmlFor="ea-location">Storage location</Label>

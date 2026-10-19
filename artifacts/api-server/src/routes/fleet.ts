@@ -61,6 +61,15 @@ const truckExtensionSchema = z
     operatingRadiusMiles: z.number().int().min(0).nullable().optional(),
     insuranceVehNumber: z.number().int().min(0).nullable().optional(),
     bodyTypeCode: z.string().trim().max(20).nullable().optional(),
+    // Fleet tag painted on the truck ("JT-01") and plate-expiration
+    // month as "YYYY-MM". Empty string clears (handled in pickTruckExtFields).
+    fleetTag: z.string().trim().max(20).nullable().optional(),
+    plateExpires: z
+      .string()
+      .trim()
+      .regex(/^(\d{4}-(0[1-9]|1[0-2]))?$/, "expected YYYY-MM")
+      .nullable()
+      .optional(),
   })
   .passthrough();
 
@@ -75,6 +84,8 @@ const TRUCK_EXT_FIELDS = [
   "operatingRadiusMiles",
   "insuranceVehNumber",
   "bodyTypeCode",
+  "fleetTag",
+  "plateExpires",
 ] as const;
 
 function pickTruckExtFields(
@@ -1130,6 +1141,9 @@ type AssetSummary = {
   operatingRadiusMiles: number | null;
   insuranceVehNumber: number | null;
   bodyTypeCode: string | null;
+  // Fleet tag ("JT-01") + plate expiration month ("YYYY-MM"); trucks only.
+  fleetTag: string | null;
+  plateExpires: string | null;
 };
 
 const DUE_SOON_FRACTION = 0.1; // within 10% of interval
@@ -1383,6 +1397,8 @@ async function buildAssetList(departmentId?: number): Promise<AssetSummary[]> {
       operatingRadiusMiles: t.operatingRadiusMiles ?? null,
       insuranceVehNumber: t.insuranceVehNumber ?? null,
       bodyTypeCode: t.bodyTypeCode ?? null,
+      fleetTag: t.fleetTag ?? null,
+      plateExpires: t.plateExpires ?? null,
     });
   }
 
@@ -1482,6 +1498,8 @@ async function buildAssetList(departmentId?: number): Promise<AssetSummary[]> {
       operatingRadiusMiles: null,
       insuranceVehNumber: null,
       bodyTypeCode: null,
+      fleetTag: null,
+      plateExpires: null,
     });
   }
 

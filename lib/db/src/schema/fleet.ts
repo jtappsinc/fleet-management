@@ -94,6 +94,12 @@ export const trucksTable = pgTable(
     operatingRadiusMiles: integer("operating_radius_miles"),
     insuranceVehNumber: integer("insurance_veh_number"),
     bodyTypeCode: text("body_type_code"),
+    // Official fleet tag painted on the vehicle ("JT-01", "JTTT-50",
+    // "JTLJ-60") and the plate-expiration month as ISO "YYYY-MM".
+    // Seeded from the printed tag sheets by lib/db/src/fleetTags.ts
+    // (fills blanks only), editable from the asset detail / edit dialog.
+    fleetTag: text("fleet_tag"),
+    plateExpires: text("plate_expires"),
   },
   (t) => [
     index("trucks_status_idx").on(t.status),

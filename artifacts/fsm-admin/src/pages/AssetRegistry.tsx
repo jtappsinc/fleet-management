@@ -481,6 +481,8 @@ export function AssetRegistry() {
         const q = query.toLowerCase();
         const haystack = [
           a.name,
+          a.fleetTag ?? "",
+          a.plate ?? "",
           a.brand ?? "",
           a.model ?? "",
           a.identifier ?? "",
@@ -824,13 +826,23 @@ export function AssetRegistry() {
                           hasImage={a.hasImage}
                           Icon={Icon}
                         />
-                        <div>
-                          <Link
-                            href={`/assets/${a.slug}`}
-                            className="font-semibold hover:underline"
-                          >
-                            {a.name}
-                          </Link>
+                        <div className="min-w-0">
+                          <div className="flex flex-wrap items-center gap-1.5">
+                            {a.kind === "TRUCK" && a.fleetTag && (
+                              <Badge
+                                className="border-primary/30 bg-primary/10 px-1.5 py-0 font-mono text-[10px] font-semibold text-primary hover:bg-primary/10"
+                                data-testid={`asset-fleet-tag-${a.id}`}
+                              >
+                                {a.fleetTag}
+                              </Badge>
+                            )}
+                            <Link
+                              href={`/assets/${a.slug}`}
+                              className="font-semibold hover:underline"
+                            >
+                              {a.name}
+                            </Link>
+                          </div>
                           <div className="text-xs text-muted-foreground">
                             {[a.brand, a.model].filter(Boolean).join(" · ") ||
                               "No make/model"}
@@ -838,6 +850,11 @@ export function AssetRegistry() {
                           {a.identifier && (
                             <div className="font-mono text-[11px] text-muted-foreground/80">
                               {a.kind === "TRUCK" ? "VIN" : "S/N"} {a.identifier}
+                            </div>
+                          )}
+                          {a.kind === "TRUCK" && a.plate && (
+                            <div className="font-mono text-[11px] text-muted-foreground/80">
+                              Plate {a.plate}
                             </div>
                           )}
                           {a.category === "HANDHELD" && a.location && (

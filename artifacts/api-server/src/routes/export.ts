@@ -39,12 +39,14 @@ router.get(
 
     // ---- Fleet sheet ----
     const fleetRows = trucks.map((t) => ({
+      "Fleet Tag": t.fleetTag ?? "",
       Name: t.name ?? "",
       Year: t.year ?? "",
       Make: t.brand ?? "",
       Model: t.model ?? "",
       VIN: t.vin ?? "",
       Plate: t.plate ?? "",
+      "Plate Expires": t.plateExpires ?? "",
       Status: t.status ?? "",
       "Insurance Veh #": t.insuranceVehNumber ?? "",
       "Stated Value ($)":

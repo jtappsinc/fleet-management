@@ -10,6 +10,7 @@ import {
   backfillDepartments,
   importRealCrews,
   cleanupDemoUsers,
+  applyFleetTags,
   crewMembersTable,
 } from "@workspace/db";
 
@@ -57,6 +58,17 @@ async function startup() {
     await backfillFleetData();
   } catch (err) {
     logger.error({ err }, "Failed to backfill fleet data on boot");
+  }
+
+  // Official fleet tags / plates / plate-expiration months from the
+  // printed tag sheets (lib/db/src/fleetTags.ts). Adds the two columns
+  // if missing, matches trucks by VIN, and only fills blank fields —
+  // hand edits are never overwritten. Runs after the fleet backfill so
+  // the #55/#56 trucks it inserts are already present to be tagged.
+  try {
+    await applyFleetTags({ log: (msg) => logger.info(msg) });
+  } catch (err) {
+    logger.error({ err }, "Failed to apply fleet tags on boot");
   }
 
   // Migrate any DB seeded against an older department layout to the
