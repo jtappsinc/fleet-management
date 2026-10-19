@@ -11,7 +11,7 @@
   { "vehNum": 11, "year": 2008, "brand": "Ford",         "model": "F250",            "bodyType": "PU",    "vin": "1FDNF20568ED86171", "statedValueCents": 1000000,  "gvwLbs": 6500  },
   { "vehNum": 12, "year": 2008, "brand": "Ford",         "model": "F250",            "bodyType": "PU",    "vin": "1FTSX20Y78EA86153", "statedValueCents": 1000000,  "gvwLbs": 6500  },
   { "vehNum": 13, "year": 2001, "brand": "Ford",         "model": "F250",            "bodyType": "PU",    "vin": "1FTNW21L61EB04327", "statedValueCents": 1000000,  "gvwLbs": 6500  },
-  { "vehNum": 14, "year": 2024, "brand": "Ford",         "model": "F350",            "bodyType": "PU",    "vin": "FTRF3BA6REC50078",  "statedValueCents": 9900000,  "gvwLbs": 18000 },
+  { "vehNum": 14, "year": 2024, "brand": "Ford",         "model": "F350",            "bodyType": "PU",    "vin": "1FTRF3BA6REC50078", "statedValueCents": 9900000,  "gvwLbs": 18000 },
   { "vehNum": 15, "year": 2024, "brand": "Ford",         "model": "F350",            "bodyType": "PU",    "vin": "1FT8X3BA5REC50095", "statedValueCents": 10000000, "gvwLbs": 18000 },
   { "vehNum": 16, "year": 2023, "brand": "Ford",         "model": "F350",            "bodyType": "TK",    "vin": "1FT8W3BA9PEC72200", "statedValueCents": 9300000,  "gvwLbs": 9000  },
   { "vehNum": 17, "year": 2024, "brand": "Ford",         "model": "F350",            "bodyType": "TK",    "vin": "1FTRF3BA8REC49997", "statedValueCents": 9000000,  "gvwLbs": 9000  },

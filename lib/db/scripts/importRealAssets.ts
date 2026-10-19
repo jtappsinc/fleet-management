@@ -18,6 +18,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { sql } from "drizzle-orm";
 import { db, trucksTable, equipmentTable, departmentsTable } from "../src";
+import { applyFleetTags } from "../src/fleetTags";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const DATA_DIR = join(__dirname, "data");
@@ -174,6 +175,16 @@ async function main() {
     }
   }
   console.log(`  ✓ ${truckCount} trucks/trailers`);
+
+  // ─── Fleet tags / plates / plate expirations ─────────────────────
+  // Hard-coded in lib/db/src/fleetTags.ts (transcribed from the printed
+  // tag sheets). Matches by VIN, fills the three fields, and inserts the
+  // few trucks that are on the sheets but not in trucks-import.json.
+  console.log("Applying fleet tags…");
+  const tags = await applyFleetTags({ log: (m) => console.log(`  ${m}`) });
+  console.log(
+    `  ✓ ${tags.tagged} tagged · ${tags.platesFilled} plates · ${tags.inserted} new trucks`,
+  );
 
   // ─── Heavy equipment (Dingos, lift, skid steer, track loader) ────
   console.log("Inserting heavy equipment…");

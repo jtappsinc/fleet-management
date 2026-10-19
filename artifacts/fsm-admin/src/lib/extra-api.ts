@@ -61,6 +61,10 @@ export type AssetExt = {
   operatingRadiusMiles: number | null;
   insuranceVehNumber: number | null;
   bodyTypeCode: string | null;
+  // Official fleet tag ("JT-01") and plate-expiration month ("YYYY-MM").
+  // Trucks/trailers only; null for equipment.
+  fleetTag: string | null;
+  plateExpires: string | null;
 };
 
 // ---------- Asset image ----------
@@ -389,6 +393,8 @@ export type UpdateTruckExtBody = {
   operatingRadiusMiles?: number | null;
   insuranceVehNumber?: number | null;
   bodyTypeCode?: string | null;
+  fleetTag?: string | null;
+  plateExpires?: string | null;
 };
 
 export function useUpdateTruckExt() {

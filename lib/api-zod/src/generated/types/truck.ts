@@ -28,4 +28,8 @@ export interface Truck {
   operatingRadiusMiles?: number | null;
   insuranceVehNumber?: number | null;
   bodyTypeCode?: string | null;
+  /** Fleet tag painted on the vehicle, e.g. "JT-01". */
+  fleetTag?: string | null;
+  /** Plate expiration month, "YYYY-MM". */
+  plateExpires?: string | null;
 }
