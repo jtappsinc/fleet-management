@@ -313,6 +313,8 @@ export interface MaintenanceLog {
   kind: string;
   description: string;
   performedByUserId?: number | null;
+  performedByName?: string | null;
+  performedByUserName?: string | null;
   loggedByUserId?: number | null;
   loggedByName?: string | null;
   performedAt: string;
@@ -345,6 +347,7 @@ export interface MaintenanceLogWriteBody {
   kind: string;
   description: string;
   performedByUserId?: number | null;
+  performedByName?: string | null;
   performedAt?: string | null;
   laborCostCents?: number | null;
   partsCostCents?: number | null;

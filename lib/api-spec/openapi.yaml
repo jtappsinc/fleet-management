@@ -1311,6 +1311,8 @@ components:
         kind: { type: string }
         description: { type: string }
         performedByUserId: { type: integer, nullable: true }
+        performedByName: { type: string, nullable: true, description: "Free-text performer name; preferred over performedByUserId when set." }
+        performedByUserName: { type: string, nullable: true, description: "Resolved full name for performedByUserId (older rows)." }
         loggedByUserId: { type: integer, nullable: true }
         loggedByName: { type: string, nullable: true }
         performedAt: { type: string, format: date-time }
@@ -1347,6 +1349,7 @@ components:
         kind: { type: string }
         description: { type: string }
         performedByUserId: { type: integer, nullable: true }
+        performedByName: { type: string, nullable: true, maxLength: 120 }
         performedAt: { type: string, format: date-time, nullable: true }
         laborCostCents: { type: integer, nullable: true }
         partsCostCents: { type: integer, nullable: true }

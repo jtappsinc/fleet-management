@@ -16,6 +16,7 @@ import setupRouter from "./setup";
 import invitesRouter from "./invites";
 import deleteRequestsRouter from "./deleteRequests";
 import exportRouter from "./export";
+import shopSuppliesRouter from "./shopSupplies";
 
 const router: IRouter = Router();
 
@@ -35,6 +36,7 @@ router.use(setupRouter);
 router.use(invitesRouter);
 router.use(deleteRequestsRouter);
 router.use(exportRouter);
+router.use(shopSuppliesRouter);
 router.use("/portal", portalRouter);
 
 export default router;

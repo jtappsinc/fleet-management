@@ -12,6 +12,7 @@ export interface MaintenanceLogWriteBody {
   kind: string;
   description: string;
   performedByUserId?: number | null;
+  performedByName?: string | null;
   performedAt?: Date | null;
   laborCostCents?: number | null;
   partsCostCents?: number | null;

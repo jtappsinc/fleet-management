@@ -186,6 +186,11 @@ export const maintenanceLogsTable = pgTable(
       () => usersTable.id,
       { onDelete: "set null" },
     ),
+    // Free-text "performed by" (a mechanic's name, an outside shop, a
+    // crew member who isn't a system user). Added alongside — not in
+    // place of — performedByUserId so older rows keep their user link.
+    // The UI prefers this when set, else falls back to the user's name.
+    performedByName: text("performed_by_name"),
     loggedByUserId: integer("logged_by_user_id").references(
       () => usersTable.id,
       { onDelete: "set null" },

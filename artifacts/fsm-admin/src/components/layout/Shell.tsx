@@ -19,6 +19,7 @@ import {
   Shield,
   Download,
   Loader2,
+  Boxes,
 } from "lucide-react";
 import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
 import {
@@ -53,6 +54,7 @@ const NAV_GROUPS: Array<{ label: string; items: NavItem[] }> = [
       { href: "/fleet", label: "Fleet Pulse", icon: Activity },
       { href: "/assets", label: "Asset Registry", icon: Package },
       { href: "/maintenance", label: "Maintenance Log", icon: Wrench },
+      { href: "/shop-supplies", label: "Shop Supplies", icon: Boxes },
       { href: "/crews", label: "Crews", icon: HardHat },
       { href: "/employees", label: "Crew & Members", icon: Users },
       {

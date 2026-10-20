@@ -19,6 +19,7 @@ import { FleetPulse } from "@/pages/FleetPulse";
 import { AssetRegistry } from "@/pages/AssetRegistry";
 import { AssetActionPage } from "@/pages/AssetActionPage";
 import { Maintenance } from "@/pages/Maintenance";
+import { ShopSupplies } from "@/pages/ShopSupplies";
 import { Employees } from "@/pages/Employees";
 import { Permissions } from "@/pages/Permissions";
 import { Accounting } from "@/pages/Accounting";
@@ -132,6 +133,7 @@ function AppRouter() {
                 <Route path="/assets" component={AssetRegistry} />
                 <Route path="/assets/:slug" component={AssetActionPage} />
                 <Route path="/maintenance" component={Maintenance} />
+                <Route path="/shop-supplies" component={ShopSupplies} />
                 <Route path="/crews" component={Crews} />
                 <Route path="/team" component={Team} />
                 <Route path="/delete-requests" component={DeleteRequests} />
