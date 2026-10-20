@@ -28,6 +28,7 @@ export async function backfillFleetData(): Promise<void> {
   await backfillEquipmentColumns();
   await ensureInvitesTable();
   await ensureDeleteRequestsTable();
+  await ensureShopSuppliesTable();
   await backfillSlugs();
   await backfillHandheldNames();
 
@@ -161,6 +162,43 @@ async function backfillMaintenanceLogColumns() {
   );
   await db.execute(
     sql`ALTER TABLE maintenance_logs ADD COLUMN IF NOT EXISTS receipt_data_url TEXT`,
+  );
+  // Free-text "performed by" — see schema/fleet.ts. Nullable; existing
+  // rows are untouched and keep their performed_by_user_id link.
+  await db.execute(
+    sql`ALTER TABLE maintenance_logs ADD COLUMN IF NOT EXISTS performed_by_name TEXT`,
+  );
+}
+
+/**
+ * Idempotent CREATE TABLE for shop supplies (consumables inventory with
+ * unit prices). Mirrors lib/db/src/schema/shopSupplies.ts exactly.
+ * Runs in every environment so a deploy picks it up without a
+ * migration step; a no-op once the table exists.
+ */
+async function ensureShopSuppliesTable() {
+  await db.execute(sql`
+    CREATE TABLE IF NOT EXISTS shop_supplies (
+      id SERIAL PRIMARY KEY,
+      name TEXT NOT NULL,
+      category TEXT,
+      sku TEXT,
+      vendor TEXT,
+      unit TEXT NOT NULL DEFAULT 'each',
+      quantity_on_hand INTEGER NOT NULL DEFAULT 0,
+      reorder_level INTEGER,
+      unit_price_cents INTEGER NOT NULL DEFAULT 0,
+      last_purchased_at TIMESTAMPTZ,
+      notes TEXT,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    )
+  `);
+  await db.execute(
+    sql`CREATE INDEX IF NOT EXISTS shop_supplies_name_idx ON shop_supplies (name)`,
+  );
+  await db.execute(
+    sql`CREATE INDEX IF NOT EXISTS shop_supplies_category_idx ON shop_supplies (category)`,
   );
 }
 

@@ -8,3 +8,4 @@ export * from "./service_requests";
 export * from "./portal";
 export * from "./invites";
 export * from "./deleteRequests";
+export * from "./shopSupplies";

@@ -8,6 +8,7 @@ import {
   customersTable,
   jobsTable,
   propertiesTable,
+  shopSuppliesTable,
 } from "@workspace/db";
 import { requireAuth } from "../middlewares/requireAuth";
 import { requireRole } from "../middlewares/requireRole";
@@ -19,7 +20,7 @@ router.get(
   requireAuth,
   requireRole("ADMIN"),
   async (_req, res) => {
-    const [trucks, equipment, crews, customers, jobs, properties] =
+    const [trucks, equipment, crews, customers, jobs, properties, supplies] =
       await Promise.all([
         db.select().from(trucksTable),
         db.select().from(equipmentTable),
@@ -27,6 +28,7 @@ router.get(
         db.select().from(customersTable),
         db.select().from(jobsTable),
         db.select().from(propertiesTable),
+        db.select().from(shopSuppliesTable),
       ]);
 
     // Lookup maps used across sheets
@@ -136,6 +138,26 @@ router.get(
         : "",
     }));
 
+    // ---- Shop Supplies sheet ----
+    const supplyRows = supplies.map((s) => ({
+      Name: s.name ?? "",
+      Category: s.category ?? "",
+      "SKU / Part #": s.sku ?? "",
+      Vendor: s.vendor ?? "",
+      Unit: s.unit ?? "",
+      "Qty On Hand": s.quantityOnHand ?? 0,
+      "Reorder Level": s.reorderLevel ?? "",
+      "Unit Price ($)": ((s.unitPriceCents ?? 0) / 100).toFixed(2),
+      "Stock Value ($)": (
+        ((s.unitPriceCents ?? 0) * (s.quantityOnHand ?? 0)) /
+        100
+      ).toFixed(2),
+      "Last Purchased": s.lastPurchasedAt
+        ? new Date(s.lastPurchasedAt).toLocaleDateString()
+        : "",
+      Notes: s.notes ?? "",
+    }));
+
     // ---- Build workbook ----
     const wb = xlsx.utils.book_new();
     xlsx.utils.book_append_sheet(
@@ -162,6 +184,11 @@ router.get(
       wb,
       xlsx.utils.json_to_sheet(jobRows),
       "Jobs",
+    );
+    xlsx.utils.book_append_sheet(
+      wb,
+      xlsx.utils.json_to_sheet(supplyRows),
+      "Shop Supplies",
     );
 
     const buf = xlsx.write(wb, { type: "buffer", bookType: "xlsx" });

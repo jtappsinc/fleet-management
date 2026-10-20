@@ -723,6 +723,12 @@ function buildLogValues<
   if (input.kind !== undefined) {
     out.kind = input.kind as MaintenanceKind;
   }
+  // Free-text performer: trim, and store an empty string as NULL so
+  // clearing the field in the UI actually clears the column.
+  if (typeof out.performedByName === "string") {
+    const trimmed = (out.performedByName as string).trim();
+    out.performedByName = trimmed.length ? trimmed : null;
+  }
   if (input.performedAt !== undefined && input.performedAt !== null) {
     out.performedAt =
       typeof input.performedAt === "string"
@@ -777,13 +783,22 @@ router.get(
         .orderBy(desc(maintenanceLogsTable.performedAt))
         .limit(500);
     }
-    const loggedByIds = [...new Set(rows.map((r) => r.loggedByUserId).filter((id): id is number => id != null))];
+    // Resolve logged-by AND performed-by user names in one batch so the
+    // UI can show a performer for older rows that only have the user
+    // link (newer rows carry the free-text performedByName instead).
+    const userIds = [
+      ...new Set(
+        rows
+          .flatMap((r) => [r.loggedByUserId, r.performedByUserId])
+          .filter((id): id is number => id != null),
+      ),
+    ];
     let userMap: Record<number, string> = {};
-    if (loggedByIds.length > 0) {
+    if (userIds.length > 0) {
       const users = await db
         .select({ id: usersTable.id, fullName: usersTable.fullName })
         .from(usersTable)
-        .where(sql`${usersTable.id} = ANY(ARRAY[${sql.raw(loggedByIds.join(","))}]::int[])`);
+        .where(sql`${usersTable.id} = ANY(ARRAY[${sql.raw(userIds.join(","))}]::int[])`);
       userMap = Object.fromEntries(users.map((u) => [u.id, u.fullName]));
     }
     // Include vendor / category / notes / hasReceipt so the table and CSV
@@ -800,6 +815,10 @@ router.get(
           loggedByName:
             r.loggedByUserId != null
               ? (userMap[r.loggedByUserId] ?? null)
+              : null,
+          performedByUserName:
+            r.performedByUserId != null
+              ? (userMap[r.performedByUserId] ?? null)
               : null,
           hasReceipt: receiptDataUrl != null && receiptDataUrl.length > 0,
         };
@@ -1665,22 +1684,36 @@ router.get(
           .where(eq(maintenanceLogsTable.equipmentId, asset.id))
           .orderBy(desc(maintenanceLogsTable.performedAt));
 
-    // Resolve logged-by user names in one batch query.
-    const loggedByIds = [
-      ...new Set(rawLogs.map((l) => l.loggedByUserId).filter((id): id is number => id != null)),
+    // Resolve logged-by + performed-by user names in one batch query.
+    const logUserIds = [
+      ...new Set(
+        rawLogs
+          .flatMap((l) => [l.loggedByUserId, l.performedByUserId])
+          .filter((id): id is number => id != null),
+      ),
     ];
-    const loggedByUsers =
-      loggedByIds.length > 0
+    const logUsers =
+      logUserIds.length > 0
         ? await db
             .select({ id: usersTable.id, fullName: usersTable.fullName })
             .from(usersTable)
-            .where(sql`${usersTable.id} = ANY(ARRAY[${sql.raw(loggedByIds.join(","))}]::int[])`)
+            .where(sql`${usersTable.id} = ANY(ARRAY[${sql.raw(logUserIds.join(","))}]::int[])`)
         : [];
-    const userNameMap = new Map(loggedByUsers.map((u) => [u.id, u.fullName]));
-    const logs = rawLogs.map((l) => ({
-      ...l,
-      loggedByName: l.loggedByUserId ? (userNameMap.get(l.loggedByUserId) ?? null) : null,
-    }));
+    const userNameMap = new Map(logUsers.map((u) => [u.id, u.fullName]));
+    // Strip the receipt data URL (can be MBs) — the per-log receipt
+    // endpoint serves it on demand. Expose hasReceipt so the ledger can
+    // show the same edit/receipt controls as the Maintenance page.
+    const logs = rawLogs.map((l) => {
+      const { receiptDataUrl, ...rest } = l;
+      return {
+        ...rest,
+        loggedByName: l.loggedByUserId ? (userNameMap.get(l.loggedByUserId) ?? null) : null,
+        performedByUserName: l.performedByUserId
+          ? (userNameMap.get(l.performedByUserId) ?? null)
+          : null,
+        hasReceipt: receiptDataUrl != null && receiptDataUrl.length > 0,
+      };
+    });
 
     const recentReadings = asset.kind === "TRUCK"
       ? await db

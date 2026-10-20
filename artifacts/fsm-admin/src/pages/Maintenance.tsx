@@ -1,7 +1,7 @@
 import { useMemo, useRef, useState } from "react";
 import {
   useListMaintenanceLogs, useCreateMaintenanceLog, useUpdateMaintenanceLog, useDeleteMaintenanceLog, getListMaintenanceLogsQueryKey,
-  useListTrucks, useListEquipment, useListEmployees, useListDepartments,
+  useListTrucks, useListEquipment, useListDepartments,
   type MaintenanceLog,
 } from "@workspace/api-client-react";
 import {
@@ -47,12 +47,23 @@ const usd = (cents: number) => new Intl.NumberFormat('en-US', { style: 'currency
 // Server widens MaintenanceLog with hasReceipt + accountant-facing
 // fields. The orval-generated type doesn't know about them yet, so we
 // intersect at the call site like the rest of extra-api does.
-type MaintenanceLogExt = MaintenanceLog & {
+export type MaintenanceLogExt = MaintenanceLog & {
   vendor?: string | null;
   category?: MaintenanceReceiptCategory | null;
   notes?: string | null;
   hasReceipt?: boolean;
+  // Free-text performer (new) and the resolved name for the legacy
+  // performedByUserId link (older rows). See performerName().
+  performedByName?: string | null;
+  performedByUserName?: string | null;
 };
+
+/** Who did the work: the typed name wins; older rows fall back to the linked user. */
+export function performerName(log: MaintenanceLogExt): string | null {
+  const typed = log.performedByName?.trim();
+  if (typed) return typed;
+  return log.performedByUserName?.trim() || null;
+}
 
 const RECEIPT_CATEGORIES: { value: MaintenanceReceiptCategory; label: string }[] = [
   { value: "LABOR", label: "Labor" },
@@ -157,6 +168,7 @@ export function Maintenance() {
           log.vendor ?? "",
           log.notes ?? "",
           log.loggedByName ?? "",
+          performerName(log) ?? "",
         ]
           .join(" ")
           .toLowerCase();
@@ -208,6 +220,7 @@ export function Maintenance() {
       { header: "Category", value: (l) => l.category ?? "" },
       { header: "Vendor", value: (l) => l.vendor ?? "" },
       { header: "Description", value: (l) => l.description },
+      { header: "Performed by", value: (l) => performerName(l) ?? "" },
       { header: "Labor (USD)", value: (l) => ((l.laborCostCents ?? 0) / 100).toFixed(2) },
       { header: "Parts (USD)", value: (l) => ((l.partsCostCents ?? 0) / 100).toFixed(2) },
       { header: "Total (USD)", value: (l) => ((l.costCents ?? 0) / 100).toFixed(2) },
@@ -393,6 +406,7 @@ export function Maintenance() {
                   <TableHead>Vendor</TableHead>
                   <TableHead>Description</TableHead>
                   <TableHead className="whitespace-nowrap">Performed At</TableHead>
+                  <TableHead className="whitespace-nowrap">Performed By</TableHead>
                   <TableHead className="text-right">Labor</TableHead>
                   <TableHead className="text-right">Parts</TableHead>
                   <TableHead className="text-right">Total</TableHead>
@@ -444,6 +458,9 @@ export function Maintenance() {
                     </TableCell>
                     <TableCell className="max-w-[280px] truncate" title={log.description}>{log.description}</TableCell>
                     <TableCell className="whitespace-nowrap text-sm text-muted-foreground">{new Date(log.performedAt).toLocaleDateString()}</TableCell>
+                    <TableCell className="whitespace-nowrap text-sm">
+                      {performerName(log) ?? <span className="text-xs text-muted-foreground/40">—</span>}
+                    </TableCell>
                     <TableCell className="text-right font-mono text-xs">{usd(log.laborCostCents ?? 0)}</TableCell>
                     <TableCell className="text-right font-mono text-xs">{usd(log.partsCostCents ?? 0)}</TableCell>
                     <TableCell className="text-right font-mono font-semibold">{usd(log.costCents)}</TableCell>
@@ -577,7 +594,12 @@ function ReceiptPreviewDialog({
 // via FileReader.readAsDataURL.
 const RECEIPT_SIZE_LIMIT_BYTES = 3 * 1024 * 1024;
 
-function MaintenanceFormDialog({ log, trigger, isOpen: controlledIsOpen, setIsOpen: controlledSetIsOpen }: { log?: MaintenanceLogExt, trigger?: React.ReactNode, isOpen?: boolean, setIsOpen?: (v: boolean) => void }) {
+/**
+ * Create / edit dialog for a maintenance log. Exported so the asset
+ * detail page can edit a log from its Maintenance Ledger with the exact
+ * same form. `onSaved` lets that caller refresh its own queries.
+ */
+export function MaintenanceFormDialog({ log, trigger, isOpen: controlledIsOpen, setIsOpen: controlledSetIsOpen, onSaved }: { log?: MaintenanceLogExt, trigger?: React.ReactNode, isOpen?: boolean, setIsOpen?: (v: boolean) => void, onSaved?: () => void }) {
   const [internalIsOpen, setInternalIsOpen] = useState(false);
   const isOpen = controlledIsOpen !== undefined ? controlledIsOpen : internalIsOpen;
   const setIsOpen = controlledSetIsOpen || setInternalIsOpen;
@@ -595,7 +617,6 @@ function MaintenanceFormDialog({ log, trigger, isOpen: controlledIsOpen, setIsOp
   const deptParams = activeDeptId != null ? { departmentId: activeDeptId } : {};
   const { data: trucksData } = useListTrucks(deptParams);
   const { data: equipmentData } = useListEquipment(deptParams);
-  const { data: employeesData } = useListEmployees();
   const { data: deptsData } = useListDepartments();
 
   const [formData, setFormData] = useState({
@@ -604,7 +625,9 @@ function MaintenanceFormDialog({ log, trigger, isOpen: controlledIsOpen, setIsOp
     equipmentId: log?.equipmentId?.toString() || "none",
     kind: log?.kind || "SCHEDULED",
     description: log?.description || "",
-    performedByUserId: log?.performedByUserId?.toString() || "none",
+    // Free text. Pre-filled from the typed name, else the legacy linked
+    // user's name so older logs show who did the work when editing.
+    performedBy: log ? (performerName(log) ?? "") : "",
     performedAt: log?.performedAt ? new Date(log.performedAt).toISOString().slice(0, 16) : "",
     laborDollars: log ? ((log.laborCostCents ?? 0) / 100).toString() : "0",
     partsDollars: log ? ((log.partsCostCents ?? 0) / 100).toString() : "0",
@@ -699,7 +722,9 @@ function MaintenanceFormDialog({ log, trigger, isOpen: controlledIsOpen, setIsOp
       equipmentId: !isTruck && formData.equipmentId !== "none" ? parseInt(formData.equipmentId, 10) : null,
       kind: formData.kind,
       description: formData.description,
-      performedByUserId: formData.performedByUserId !== "none" ? parseInt(formData.performedByUserId, 10) : null,
+      // performedByUserId is intentionally NOT sent: the server leaves
+      // it untouched on PATCH, so older rows keep their user link.
+      performedByName: formData.performedBy.trim() || null,
       performedAt: formData.performedAt ? new Date(formData.performedAt).toISOString() : null,
       laborCostCents: Math.round(labor * 100),
       partsCostCents: Math.round(parts * 100),
@@ -719,6 +744,7 @@ function MaintenanceFormDialog({ log, trigger, isOpen: controlledIsOpen, setIsOp
             }
             queryClient.invalidateQueries({ queryKey: getListMaintenanceLogsQueryKey() });
             queryClient.invalidateQueries({ queryKey: ["maintenance-receipt", log.id] });
+            onSaved?.();
             toast({ title: "Log updated" });
             setIsOpen(false);
           },
@@ -739,6 +765,7 @@ function MaintenanceFormDialog({ log, trigger, isOpen: controlledIsOpen, setIsOp
               }
             }
             queryClient.invalidateQueries({ queryKey: getListMaintenanceLogsQueryKey() });
+            onSaved?.();
             toast({ title: "Log created" });
             setIsOpen(false);
           },
@@ -901,14 +928,15 @@ function MaintenanceFormDialog({ log, trigger, isOpen: controlledIsOpen, setIsOp
 
           <div className="grid grid-cols-2 gap-4">
             <div className="space-y-2">
-              <Label htmlFor="performedByUserId">Performed By</Label>
-              <Select value={formData.performedByUserId} onValueChange={(val) => setFormData({ ...formData, performedByUserId: val })}>
-                <SelectTrigger><SelectValue placeholder="Select employee" /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="none">None</SelectItem>
-                  {employeesData?.employees?.map(e => <SelectItem key={e.id} value={e.id.toString()}>{e.fullName}</SelectItem>)}
-                </SelectContent>
-              </Select>
+              <Label htmlFor="performedBy">Performed By</Label>
+              <Input
+                id="performedBy"
+                value={formData.performedBy}
+                onChange={(e) => setFormData({ ...formData, performedBy: e.target.value })}
+                placeholder="Type a name — mechanic, shop, or crew member"
+                maxLength={120}
+                autoComplete="off"
+              />
             </div>
             <div className="space-y-2">
               <Label htmlFor="usageAt">
@@ -1058,7 +1086,8 @@ function MaintenanceFormDialog({ log, trigger, isOpen: controlledIsOpen, setIsOp
   );
 }
 
-function DeleteMaintenance({ id }: { id: number }) {
+/** Delete control for a log. Exported for the asset detail page's ledger. */
+export function DeleteMaintenance({ id, onDeleted }: { id: number; onDeleted?: () => void }) {
   const queryClient = useQueryClient();
   const { toast } = useToast();
   const deleteMutation = useDeleteMaintenanceLog();
@@ -1070,6 +1099,7 @@ function DeleteMaintenance({ id }: { id: number }) {
         onSuccess: (result) => {
           queryClient.invalidateQueries({ queryKey: getListMaintenanceLogsQueryKey() });
           queryClient.invalidateQueries({ queryKey: DELETE_REQUESTS_PENDING_COUNT_KEY });
+          onDeleted?.();
           toast(deleteOutcomeToast(result, "Log deleted"));
         },
         onError: () => toast({ title: "Error deleting log", variant: "destructive" })

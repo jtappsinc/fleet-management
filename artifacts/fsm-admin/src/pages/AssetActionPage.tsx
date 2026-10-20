@@ -44,6 +44,12 @@ import {
   type EquipmentItem,
 } from "@/lib/extra-api";
 import { EditAssetButton } from "@/components/EditAssetDialog";
+import {
+  MaintenanceFormDialog,
+  DeleteMaintenance,
+  performerName,
+  type MaintenanceLogExt,
+} from "@/pages/Maintenance";
 import { deleteOutcomeToast } from "@/lib/delete-outcome";
 import {
   AlertDialog,
@@ -203,7 +209,9 @@ export function AssetActionPage() {
   // the narrower usageUnit so the AssetExt override (which knows about
   // "NONE") wins.
   const asset = data.asset as Omit<typeof data.asset, "usageUnit"> & AssetExt;
-  const logs = data.logs ?? [];
+  // The server widens each log with vendor/category/notes/hasReceipt +
+  // performer fields; the orval type doesn't know those yet.
+  const logs = (data.logs ?? []) as MaintenanceLogExt[];
   const recentReadings = data.recentReadings ?? [];
   const canEditAsset =
     meData?.user?.permissions?.[asset.kind === "TRUCK" ? "fleet.trucks" : "fleet.equipment"]?.canEdit ?? false;
@@ -438,6 +446,9 @@ export function AssetActionPage() {
           <TabsTrigger value="assignments" data-testid="tab-assignments">
             Assignment History
           </TabsTrigger>
+          <TabsTrigger value="details" data-testid="tab-details">
+            All Details
+          </TabsTrigger>
         </TabsList>
 
         <TabsContent value="actions" className="space-y-4">
@@ -487,55 +498,298 @@ export function AssetActionPage() {
         </TabsContent>
 
         <TabsContent value="ledger">
-          <Card className="border-border/60">
-            <CardContent className="p-0">
-              {logs.length === 0 ? (
-                <div className="py-12 text-center text-muted-foreground">
-                  No maintenance recorded yet.
-                </div>
-              ) : (
-                <ul className="divide-y">
-                  {logs.map((log) => (
-                    <li key={log.id} className="grid gap-2 p-4 sm:grid-cols-[1fr_auto]">
-                      <div>
-                        <div className="flex flex-wrap items-center gap-2">
-                          <Badge variant="outline" className="text-[10px]">
-                            {log.kind}
-                          </Badge>
-                          <span className="text-xs text-muted-foreground">
-                            {new Date(log.performedAt).toLocaleDateString()}
-                          </span>
-                          {(log.mileageAtService ?? log.hoursAtService) != null && (
-                            <span className="font-mono text-[11px] text-muted-foreground">
-                              @ {num(log.mileageAtService ?? log.hoursAtService ?? 0)}{" "}
-                              {asset.usageUnit === "MILES" ? "mi" : "hrs"}
-                            </span>
-                          )}
-                          {log.loggedByName && (
-                            <span className="flex items-center gap-1 text-[11px] text-muted-foreground">
-                              <User className="h-3 w-3" />
-                              {log.loggedByName}
-                            </span>
-                          )}
-                        </div>
-                        <div className="mt-1 text-sm font-medium">{log.description}</div>
-                      </div>
-                      <div className="text-right">
-                        <div className="font-mono text-sm font-semibold">
-                          {usd(log.costCents)}
-                        </div>
-                        <div className="font-mono text-[11px] text-muted-foreground">
-                          {usd(log.laborCostCents)} labor · {usd(log.partsCostCents)} parts
-                        </div>
-                      </div>
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </CardContent>
-          </Card>
+          <MaintenanceLedgerCard
+            asset={asset}
+            logs={logs}
+            canEdit={canEditMaintenance}
+          />
+        </TabsContent>
+
+        <TabsContent value="details">
+          <AllDetailsCard asset={asset} />
         </TabsContent>
       </Tabs>
+    </div>
+  );
+}
+
+/**
+ * Maintenance Ledger tab — every log for this asset, each one editable
+ * and deletable with the same dialog the Maintenance page uses, so a
+ * record can be fixed from wherever you found it.
+ */
+function MaintenanceLedgerCard({
+  asset,
+  logs,
+  canEdit,
+}: {
+  asset: AssetExt & { slug: string; usageUnit: "MILES" | "HOURS" | "NONE" };
+  logs: MaintenanceLogExt[];
+  canEdit: boolean;
+}) {
+  const queryClient = useQueryClient();
+  const refresh = () => {
+    queryClient.invalidateQueries({ queryKey: getGetAssetBySlugQueryKey(asset.slug) });
+    queryClient.invalidateQueries({ queryKey: getListAssetsQueryKey() });
+    queryClient.invalidateQueries({ queryKey: getGetFleetPulseQueryKey() });
+  };
+  return (
+    <Card className="border-border/60">
+      <CardContent className="p-0">
+        {logs.length === 0 ? (
+          <div className="py-12 text-center text-muted-foreground">
+            No maintenance recorded yet.
+          </div>
+        ) : (
+          <ul className="divide-y">
+            {logs.map((log) => {
+              const performer = performerName(log);
+              return (
+                <li
+                  key={log.id}
+                  className="grid gap-2 p-4 sm:grid-cols-[1fr_auto]"
+                  data-testid={`ledger-row-${log.id}`}
+                >
+                  <div className="min-w-0">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <Badge variant="outline" className="text-[10px]">
+                        {log.kind}
+                      </Badge>
+                      {log.category && (
+                        <Badge variant="secondary" className="text-[10px]">
+                          {log.category}
+                        </Badge>
+                      )}
+                      <span className="text-xs text-muted-foreground">
+                        {new Date(log.performedAt).toLocaleDateString()}
+                      </span>
+                      {(log.mileageAtService ?? log.hoursAtService) != null && (
+                        <span className="font-mono text-[11px] text-muted-foreground">
+                          @ {num(log.mileageAtService ?? log.hoursAtService ?? 0)}{" "}
+                          {asset.usageUnit === "MILES" ? "mi" : "hrs"}
+                        </span>
+                      )}
+                      {performer && (
+                        <span className="flex items-center gap-1 text-[11px] text-muted-foreground">
+                          <Wrench className="h-3 w-3" />
+                          {performer}
+                        </span>
+                      )}
+                      {log.loggedByName && (
+                        <span className="flex items-center gap-1 text-[11px] text-muted-foreground">
+                          <User className="h-3 w-3" />
+                          logged by {log.loggedByName}
+                        </span>
+                      )}
+                      {log.hasReceipt && (
+                        <Badge variant="outline" className="text-[10px]">
+                          receipt
+                        </Badge>
+                      )}
+                    </div>
+                    <div className="mt-1 text-sm font-medium">{log.description}</div>
+                    {(log.vendor || log.notes) && (
+                      <div className="mt-0.5 truncate text-xs text-muted-foreground">
+                        {[log.vendor, log.notes].filter(Boolean).join(" · ")}
+                      </div>
+                    )}
+                  </div>
+                  <div className="flex items-start justify-between gap-3 sm:flex-col sm:items-end">
+                    <div className="text-right">
+                      <div className="font-mono text-sm font-semibold">
+                        {usd(log.costCents)}
+                      </div>
+                      <div className="font-mono text-[11px] text-muted-foreground">
+                        {usd(log.laborCostCents)} labor · {usd(log.partsCostCents)} parts
+                      </div>
+                    </div>
+                    {canEdit && (
+                      <div className="flex items-center gap-1">
+                        <MaintenanceFormDialog
+                          log={log}
+                          onSaved={refresh}
+                          trigger={
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="h-8 w-8"
+                              aria-label="Edit maintenance log"
+                              data-testid={`ledger-edit-${log.id}`}
+                            >
+                              <Pencil className="h-4 w-4" />
+                            </Button>
+                          }
+                        />
+                        <DeleteMaintenance id={log.id} onDeleted={refresh} />
+                      </div>
+                    )}
+                  </div>
+                </li>
+              );
+            })}
+          </ul>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+/**
+ * "All Details" tab — one flat, read-everything view of every field the
+ * system holds for this asset, grouped so nothing has to be hunted for
+ * across the other tabs. Values are display-only here; editing lives in
+ * the Edit button and the inline controls on the header.
+ */
+function AllDetailsCard({
+  asset,
+}: {
+  asset: Omit<AssetExt, "usageUnit"> & {
+    id: number;
+    slug: string;
+    name: string;
+    kind: "TRUCK" | "EQUIPMENT";
+    brand?: string | null;
+    model?: string | null;
+    identifier?: string | null;
+    plate?: string | null;
+    equipmentType?: string | null;
+    status: string;
+    departmentName?: string | null;
+    purchasePriceCents?: number | null;
+    purchaseDate?: string | null;
+    currentUsage: number;
+    usageUnit: "MILES" | "HOURS" | "NONE";
+    serviceIntervalUsage: number;
+    lastServiceUsage?: number | null;
+    usageSinceLastService?: number | null;
+    nextServiceDueAt: number;
+    usageUntilDue: number;
+    serviceState: string;
+    lifeToDateSpendCents: number;
+    ytdSpendCents?: number;
+    costPerUsageCents?: number | null;
+    lastServicePerformedAt?: string | null;
+  };
+}) {
+  const isTruck = asset.kind === "TRUCK";
+  const tracks = asset.usageUnit !== "NONE";
+  const unit = asset.usageUnit === "MILES" ? "mi" : "hrs";
+  const date = (iso: string | null | undefined) =>
+    iso ? new Date(iso).toLocaleString() : null;
+  const day = (iso: string | null | undefined) =>
+    iso ? new Date(iso).toLocaleDateString() : null;
+  const money = (c: number | null | undefined) => (c != null ? usd(c) : null);
+  const n = (v: number | null | undefined, suffix = "") =>
+    v != null ? `${num(v)}${suffix}` : null;
+
+  type Row = [label: string, value: string | null | undefined];
+  const sections: Array<{ title: string; rows: Row[] }> = [
+    {
+      title: "Identity",
+      rows: [
+        ["Name", asset.name],
+        ["Type", isTruck ? (asset.category === "TRAILER" ? "Trailer" : "Truck") : asset.category === "CUSTOM" ? asset.customCategoryLabel || "Custom" : "Handheld"],
+        ...(isTruck ? ([["Fleet tag", asset.fleetTag]] as Row[]) : []),
+        ...(!isTruck ? ([["Equipment type", asset.equipmentType]] as Row[]) : []),
+        ["Brand", asset.brand],
+        ["Model", asset.model],
+        [isTruck ? "VIN" : "Serial #", asset.identifier],
+        ...(isTruck ? ([["License plate", asset.plate], ["Plate expires", asset.plateExpires]] as Row[]) : []),
+        ...(!isTruck ? ([["Storage location", asset.location], ["Quantity", n(asset.quantity)]] as Row[]) : []),
+        ["Status", statusLabel(asset.status)],
+        ["Record ID", `${asset.kind.toLowerCase()} #${asset.id}`],
+        ["Slug", asset.slug],
+      ],
+    },
+    {
+      title: "Assignment",
+      rows: [
+        ["Department", asset.departmentName],
+        ["Assigned crew", asset.assignedCrewName],
+        ["Last assigned", date(asset.lastAssignedAt)],
+        ["Last assigned by", asset.lastAssignedByName],
+        ["Currently held by", asset.currentHolderName],
+        ["Checked out since", date(asset.currentCheckoutSince)],
+        ["Last holder", asset.lastHolderName],
+        ["Last checked out", date(asset.lastCheckedOutAt)],
+      ],
+    },
+    ...(isTruck
+      ? [
+          {
+            title: "Registration & Insurance",
+            rows: [
+              ["Model year", n(asset.year)],
+              ["Body type", asset.bodyTypeCode],
+              ["Insurance vehicle #", n(asset.insuranceVehNumber)],
+              ["Stated value", money(asset.statedValueCents)],
+              ["GVW / GCW", n(asset.gvwGcwLbs, " lbs")],
+              ["Garaging state", asset.garagingState],
+              ["Operating radius", n(asset.operatingRadiusMiles, " mi")],
+            ] as Row[],
+          },
+        ]
+      : []),
+    {
+      title: "Purchase & Cost",
+      rows: [
+        ["Purchase price", money(asset.purchasePriceCents)],
+        ["Purchase date", day(asset.purchaseDate)],
+        ["Life-to-date maintenance", money(asset.lifeToDateSpendCents)],
+        ["This year", money(asset.ytdSpendCents)],
+        ["This month", money(asset.mtdSpendCents)],
+        ["Last 30 days", money(asset.last30SpendCents)],
+        ...(tracks
+          ? ([[`Cost per ${unit === "mi" ? "mile" : "hour"}`, asset.costPerUsageCents != null ? `${usd(asset.costPerUsageCents)}/${unit}` : null]] as Row[])
+          : []),
+      ],
+    },
+    ...(tracks
+      ? [
+          {
+            title: "Usage & Service",
+            rows: [
+              [asset.usageUnit === "MILES" ? "Odometer" : "Engine hours", n(asset.currentUsage, ` ${unit}`)],
+              ["Service interval", n(asset.serviceIntervalUsage, ` ${unit}`)],
+              ["Last service at", n(asset.lastServiceUsage, ` ${unit}`)],
+              ["Since last service", n(asset.usageSinceLastService, ` ${unit}`)],
+              ["Next service due at", n(asset.nextServiceDueAt, ` ${unit}`)],
+              ["Until due", n(asset.usageUntilDue, ` ${unit}`)],
+              ["Service state", asset.serviceState === "DUE_SOON" ? "Due soon" : asset.serviceState === "OVERDUE" ? "Overdue" : "OK"],
+              ["Last service performed", date(asset.lastServicePerformedAt)],
+            ] as Row[],
+          },
+        ]
+      : []),
+  ];
+
+  return (
+    <div className="grid gap-4 md:grid-cols-2">
+      {sections.map((s) => (
+        <Card key={s.title} className="border-border/60">
+          <CardHeader className="pb-2">
+            <CardTitle className="text-xs font-mono uppercase tracking-widest text-muted-foreground">
+              {s.title}
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <dl className="divide-y">
+              {s.rows.map(([label, value]) => (
+                <div key={label} className="grid grid-cols-[140px_1fr] gap-3 py-1.5 text-sm">
+                  <dt className="text-muted-foreground">{label}</dt>
+                  <dd className="min-w-0 break-words font-medium">
+                    {value != null && value !== "" ? (
+                      value
+                    ) : (
+                      <span className="italic text-muted-foreground/50">—</span>
+                    )}
+                  </dd>
+                </div>
+              ))}
+            </dl>
+          </CardContent>
+        </Card>
+      ))}
     </div>
   );
 }

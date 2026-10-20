@@ -541,6 +541,77 @@ export function useDeleteCrew() {
   });
 }
 
+// ---------- Shop Supplies ----------
+// Consumables inventory (oil, filters, blades, hardware…) with unit
+// prices. Backed by /api/shop-supplies; permissions piggyback on
+// fleet.maintenance (view to see, edit to change).
+export type ShopSupply = {
+  id: number;
+  name: string;
+  category: string | null;
+  sku: string | null;
+  vendor: string | null;
+  unit: string;
+  quantityOnHand: number;
+  reorderLevel: number | null;
+  unitPriceCents: number;
+  lastPurchasedAt: string | null;
+  notes: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type ShopSupplyWriteBody = {
+  name: string;
+  category?: string | null;
+  sku?: string | null;
+  vendor?: string | null;
+  unit?: string;
+  quantityOnHand?: number;
+  reorderLevel?: number | null;
+  unitPriceCents?: number;
+  lastPurchasedAt?: string | null;
+  notes?: string | null;
+};
+
+export const SHOP_SUPPLIES_KEY = ["shop-supplies"] as const;
+
+export function useListShopSupplies() {
+  return useQuery({
+    queryKey: SHOP_SUPPLIES_KEY,
+    queryFn: () => customFetch<{ supplies: ShopSupply[] }>("/api/shop-supplies"),
+  });
+}
+
+export function useCreateShopSupply() {
+  return useMutation({
+    mutationFn: (body: ShopSupplyWriteBody) =>
+      customFetch<{ supply: ShopSupply }>("/api/shop-supplies", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(body),
+      }),
+  });
+}
+
+export function useUpdateShopSupply() {
+  return useMutation({
+    mutationFn: ({ id, data }: { id: number; data: Partial<ShopSupplyWriteBody> }) =>
+      customFetch<{ supply: ShopSupply }>(`/api/shop-supplies/${id}`, {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(data),
+      }),
+  });
+}
+
+export function useDeleteShopSupply() {
+  return useMutation({
+    mutationFn: (id: number) =>
+      customFetch<unknown>(`/api/shop-supplies/${id}`, { method: "DELETE" }),
+  });
+}
+
 // ---------- Maintenance Receipt ----------
 // Side endpoint that lets the maintenance dialog attach a vendor
 // receipt photo (base64 data URL) and accountant-facing fields

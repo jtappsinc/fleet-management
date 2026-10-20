@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { Link } from "wouter";
+import { Link, useLocation } from "wouter";
 import { useQueryClient } from "@tanstack/react-query";
 import {
   useListAssets,
@@ -413,7 +413,18 @@ function AddAssetDialog({ onCreated }: { onCreated: () => void }) {
   );
 }
 
+// A click anywhere on an asset row opens its detail page — unless the
+// click landed on something interactive inside the row (checkbox, link,
+// button), which keeps its own behaviour.
+function isInteractiveTarget(el: EventTarget | null): boolean {
+  return (
+    el instanceof Element &&
+    el.closest('a, button, input, [role="checkbox"], [role="button"], [data-no-row-nav]') != null
+  );
+}
+
 export function AssetRegistry() {
+  const [, navigate] = useLocation();
   const { activeDeptId } = useDepartmentFilter();
   const { data, isLoading, refetch } = useListAssets(activeDeptId != null ? { departmentId: activeDeptId } : {});
   const { data: crewsData } = useListCrews();
@@ -799,7 +810,12 @@ export function AssetRegistry() {
                   <TableRow
                     key={`${a.kind}-${a.id}`}
                     data-testid={`asset-row-${a.slug}`}
-                    className={a.departmentId == null ? "bg-amber-50/40" : undefined}
+                    className={`cursor-pointer ${a.departmentId == null ? "bg-amber-50/40" : ""}`}
+                    title="Open details"
+                    onClick={(e) => {
+                      if (isInteractiveTarget(e.target)) return;
+                      navigate(`/assets/${a.slug}`);
+                    }}
                   >
                     {canEditFleet && (
                       <TableCell>
@@ -977,7 +993,7 @@ export function AssetRegistry() {
                         >
                           <Link href={`/assets/${a.slug}`}>
                             <QrCode className="h-3.5 w-3.5" />
-                            Open
+                            Details
                             <ArrowRight className="h-3.5 w-3.5" />
                           </Link>
                         </Button>

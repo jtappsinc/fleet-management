@@ -25,6 +25,7 @@ import {
   Sparkles,
   Shield,
   UserPlus,
+  Boxes,
 } from "lucide-react";
 import {
   Bar,
@@ -82,6 +83,12 @@ const QUICK_ACTIONS: QuickAction[] = [
     label: "Maintenance Log",
     description: "Repairs, inspections, costs",
     icon: Wrench,
+  },
+  {
+    href: "/shop-supplies",
+    label: "Shop Supplies",
+    description: "Stock on hand & prices",
+    icon: Boxes,
   },
   {
     href: "/crews",

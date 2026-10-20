@@ -13,6 +13,10 @@ export interface MaintenanceLog {
   kind: string;
   description: string;
   performedByUserId?: number | null;
+  /** Free-text performer name (preferred over the user link when set). */
+  performedByName?: string | null;
+  /** Resolved full name for performedByUserId, for older rows. */
+  performedByUserName?: string | null;
   loggedByUserId?: number | null;
   loggedByName?: string | null;
   performedAt: Date;
